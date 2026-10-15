@@ -243,22 +243,67 @@ object McLoader {
         return sb.toString()
     }
 
-    /**
-     * Kelas saoF (kumpulan string statis) tidak terisi karena kode startup Minecraft tidak ikut jalan
-     * di Cubix, lalu MainActivity.getScreenHeight() crash (NullPointerException). Isi yang null dengan "".
-     */
-    private fun fillNullStrings(loader: ClassLoader) {
-        try {
-            val k = Class.forName("org.spongycastle.jce.netscape.Kaf.saoF", true, loader)
-            for (f in k.declaredFields) {
-                if (f.type != String::class.java || !java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-                try {
-                    f.isAccessible = true
-                    if (f.get(null) == null) f.set(null, "")
-                } catch (_: Throwable) {
-                }
+    /** Nilai asli untuk field string yang diketahui dibaca MainActivity (selain "" biasa). */
+    private val KNOWN_STRINGS = mapOf(
+        // MainActivity.onCreate baris ~428: checkPermission(<field ini>, pid, uid) -> mHasStoragePermission
+        "org.spongycastle.math.raw.gGd.RNTdaLaXDINeE" to mapOf(
+            "OzjLtWrMWVvcOMs" to "android.permission.WRITE_EXTERNAL_STORAGE"
+        )
+    )
+
+    private fun fillClass(k: Class<*>, known: Map<String, String>?) {
+        for (f in k.declaredFields) {
+            if (f.type != String::class.java || !java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+            try {
+                f.isAccessible = true
+                if (f.get(null) == null) f.set(null, known?.get(f.name) ?: "")
+            } catch (_: Throwable) {
             }
+        }
+    }
+
+    /**
+     * Kode startup PairIP Minecraft tidak jalan di Cubix, jadi kelas-kelas penampung string
+     * (yang namanya diacak, mis. saoF dan RNTdaLaXDINeE) tidak terisi dan field-nya null.
+     * fix_18: isi semua field String statis yang null di kelas-kelas itu, bukan hanya saoF.
+     */
+    private fun fillNullStrings(loader: ClassLoader, dexPaths: List<String>) {
+        // 1. saoF (fix_16)
+        try {
+            fillClass(Class.forName("org.spongycastle.jce.netscape.Kaf.saoF", true, loader), null)
         } catch (_: Throwable) {
+        }
+        // 2. kelas yang sudah diketahui, dengan nilai yang benar
+        for ((cn, vals) in KNOWN_STRINGS) {
+            try {
+                fillClass(Class.forName(cn, true, loader), vals)
+            } catch (_: Throwable) {
+            }
+        }
+        // 3. jaring pengaman: kelas org.spongycastle.* yang SEMUA field-nya String statis
+        //    (ciri penampung string PairIP; kelas spongycastle asli tidak seperti itu)
+        for (path in dexPaths) {
+            try {
+                @Suppress("DEPRECATION")
+                val df = dalvik.system.DexFile(path)
+                val names = df.entries()
+                while (names.hasMoreElements()) {
+                    val n = names.nextElement()
+                    if (!n.startsWith("org.spongycastle.")) continue
+                    try {
+                        val k = Class.forName(n, false, loader)
+                        val fs = k.declaredFields
+                        if (fs.isEmpty()) continue
+                        if (fs.all { it.type == String::class.java && java.lang.reflect.Modifier.isStatic(it.modifiers) }) {
+                            fillClass(k, KNOWN_STRINGS[n])
+                        }
+                    } catch (_: Throwable) {
+                    }
+                }
+                @Suppress("DEPRECATION")
+                df.close()
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -326,7 +371,7 @@ object McLoader {
             parent
         )
         clField.set(packageInfo, loader)
-        fillNullStrings(loader)
+        fillNullStrings(loader, dexPaths)
         prepared = true
     }
 }
