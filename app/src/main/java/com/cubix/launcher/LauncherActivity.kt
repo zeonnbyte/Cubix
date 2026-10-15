@@ -171,7 +171,8 @@ class LauncherActivity : Activity() {
         logView.text = "Mengekstrak dan menganalisis library, tunggu sebentar...\n"
         Thread {
             val report = StringBuilder()
-            report.append("Cubix fix_18 laporan library\n")
+            val cubixVer = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Throwable) { "?" }
+            report.append("Cubix $cubixVer laporan library\n")
             report.append("ABI HP: ").append(Build.SUPPORTED_ABIS.joinToString()).append('\n')
             try {
                 @Suppress("DEPRECATION")
