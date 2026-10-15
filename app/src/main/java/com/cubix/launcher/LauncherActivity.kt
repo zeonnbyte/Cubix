@@ -191,6 +191,9 @@ class LauncherActivity : Activity() {
                 return
             }
             log("Library diekstrak: ${libs.joinToString()}")
+            if (libs.contains("libmaesdk.so")) {
+                log("libmaesdk.so aktif (patch bypass init_array & safe string diterapkan).")
+            }
 
             McLoader.prepare(this, info)
             log("Class loader siap, menjalankan Minecraft...")
