@@ -1,8 +1,12 @@
 package com.cubix.launcher
 
+import android.app.Activity
+import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
+import android.os.Bundle
 import dalvik.system.DexClassLoader
 import java.io.File
 import java.io.RandomAccessFile
@@ -27,7 +31,7 @@ object McLoader {
     private const val ABI_DIR = "lib/armeabi-v7a/"
 
     // Ganti nilai ini kalau isi mclibs harus diekstrak ulang (mis. setelah logika ekstraksi berubah).
-    private const val PATCH_VERSION = "cubix_v4_stub"
+    private const val PATCH_VERSION = "cubix_v5_res"
 
     @Volatile
     private var prepared = false
@@ -259,15 +263,40 @@ object McLoader {
         val dexPaths = dexApkPaths(info)
         val libDir = libDir(ctx)
 
-        // Asset dan resource Minecraft ikut terbaca oleh activity baru
-        val ai = app.applicationInfo
-        val old = ai.sharedLibraryFiles?.toList() ?: emptyList()
-        ai.sharedLibraryFiles = (old + allApkPaths).distinct().toTypedArray()
-
-        // Ganti class loader aplikasi hanya dengan APK yang berisi .dex
+        // Resource Minecraft dijadikan resource UTAMA aplikasi (Cubix sendiri tidak punya resource),
+        // supaya ID resource 0x7f... di kode Minecraft cocok. Activity yang dibuat setelah ini
+        // memakai APK Minecraft sebagai sumber resource dan asset.
         val base = (app as ContextWrapper).baseContext
         val packageInfo = findField(base, "mPackageInfo").get(base)
             ?: throw IllegalStateException("mPackageInfo null")
+        findField(packageInfo, "mResDir").set(packageInfo, info.sourceDir)
+        try {
+            findField(packageInfo, "mSplitResDirs").set(packageInfo, info.splitSourceDirs)
+        } catch (_: Throwable) {
+        }
+
+        // Tema MainActivity harus tema AppCompat milik Minecraft (ID-nya dari tabel resource Minecraft).
+        val mcTheme = try {
+            ctx.packageManager.getActivityInfo(ComponentName(MC_PACKAGE, MC_MAIN), 0).themeResource
+        } catch (_: Throwable) {
+            0
+        }
+        if (mcTheme != 0) {
+            (app as Application).registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+                override fun onActivityPreCreated(activity: Activity, savedInstanceState: Bundle?) {
+                    if (activity.javaClass.name == MC_MAIN) activity.setTheme(mcTheme)
+                }
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+                override fun onActivityStarted(activity: Activity) {}
+                override fun onActivityResumed(activity: Activity) {}
+                override fun onActivityPaused(activity: Activity) {}
+                override fun onActivityStopped(activity: Activity) {}
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+                override fun onActivityDestroyed(activity: Activity) {}
+            })
+        }
+
+        // Ganti class loader aplikasi hanya dengan APK yang berisi .dex
         val clField = findField(packageInfo, "mClassLoader")
         val parent = clField.get(packageInfo) as ClassLoader
         val optDir = File(ctx.codeCacheDir, "mcdex").apply { mkdirs() }
