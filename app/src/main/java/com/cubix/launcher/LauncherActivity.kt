@@ -20,6 +20,11 @@ class LauncherActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        try {
+            System.loadLibrary("cubix")
+        } catch (t: Throwable) {
+            // crash handler native tidak aktif, game tetap bisa dijalankan
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -68,7 +73,7 @@ class LauncherActivity : Activity() {
                 if (idx < 0) {
                     clean.takeLast(80).joinToString("\n")
                 } else {
-                    clean.subList(maxOf(0, idx - 25), minOf(clean.size, idx + 90)).joinToString("\n")
+                    clean.subList(maxOf(0, idx - 90), minOf(clean.size, idx + 70)).joinToString("\n")
                 }
             } catch (t: Throwable) {
                 "Gagal baca log: ${t.message}"

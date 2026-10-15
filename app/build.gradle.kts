@@ -11,7 +11,7 @@ android {
         applicationId = "com.cubix.launcher"
         minSdk = 21
         targetSdk = 33
-        versionCode = 5
+        versionCode = 6
         versionName = "0.1"
 
         // Khusus 32-bit ARM
@@ -22,7 +22,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++17"
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                arguments += listOf("-DANDROID_STL=none")
             }
         }
     }
