@@ -63,6 +63,10 @@ class LauncherActivity : Activity() {
             text = "4. Ekspor dex MainActivity Minecraft ke Download"
             setOnClickListener { exportMcDex() }
         }
+        val btnDiag = Button(this).apply {
+            text = "5. Diagnosa kelas saoF dan Application Minecraft"
+            setOnClickListener { diagnose() }
+        }
         logView = TextView(this).apply { setTextIsSelectable(true) }
         root.addView(btnRun)
         root.addView(btnPlain)
@@ -71,6 +75,7 @@ class LauncherActivity : Activity() {
         root.addView(btnExportSmall)
         root.addView(btnExportMc)
         root.addView(btnExportDex)
+        root.addView(btnDiag)
         root.addView(
             ScrollView(this).apply { addView(logView) },
             LinearLayout.LayoutParams(
@@ -166,7 +171,7 @@ class LauncherActivity : Activity() {
         logView.text = "Mengekstrak dan menganalisis library, tunggu sebentar...\n"
         Thread {
             val report = StringBuilder()
-            report.append("Cubix fix_15 laporan library\n")
+            report.append("Cubix fix_16 laporan library\n")
             report.append("ABI HP: ").append(Build.SUPPORTED_ABIS.joinToString()).append('\n')
             try {
                 @Suppress("DEPRECATION")
@@ -266,6 +271,48 @@ class LauncherActivity : Activity() {
                     }
                 }
                 if (count == 0) logUi("Tidak ada dex yang memuat MainActivity.") else logUi("Selesai.")
+            } catch (t: Throwable) {
+                logUi("GAGAL ${t.javaClass.simpleName}: ${t.message}")
+            }
+        }.start()
+    }
+
+    /** Tombol 5: baca isi kelas saoF dan info Application Minecraft lewat class loader Minecraft. */
+    private fun diagnose() {
+        logView.text = ""
+        Thread {
+            try {
+                val info = packageManager.getApplicationInfo(McLoader.MC_PACKAGE, 0)
+                logUi("Application Minecraft: ${info.className}")
+                McLoader.extractLibs(this, info)
+                McLoader.prepare(this, info)
+                val cl = applicationContext.classLoader
+                val appName = info.className
+                if (appName != null) {
+                    try {
+                        var c: Class<*>? = Class.forName(appName, false, cl)
+                        val chain = mutableListOf<String>()
+                        while (c != null) { chain.add(c.name); c = c.superclass }
+                        logUi("Rantai kelas Application: ${chain.joinToString(" > ")}")
+                        val ac = Class.forName(appName, false, cl)
+                        logUi("Method Application: ${ac.declaredMethods.joinToString { it.name }}")
+                    } catch (t: Throwable) {
+                        logUi("Application: GAGAL ${t.javaClass.simpleName}: ${t.message}")
+                    }
+                }
+                try {
+                    val k = Class.forName("org.spongycastle.jce.netscape.Kaf.saoF", true, cl)
+                    logUi("saoF method: ${k.declaredMethods.joinToString { it.name }.ifEmpty { "(tidak ada)" }}")
+                    for (f in k.declaredFields) {
+                        f.isAccessible = true
+                        val v = try { f.get(null) } catch (t: Throwable) { "ERR ${t.message}" }
+                        logUi("saoF.${f.name} = ${v?.let { "\"" + it + "\"" } ?: "NULL"}")
+                    }
+                } catch (t: Throwable) {
+                    logUi("saoF: GAGAL ${t.javaClass.simpleName}: ${t.message}")
+                    t.cause?.let { logUi("  penyebab: ${it.javaClass.simpleName}: ${it.message}") }
+                }
+                logUi("Selesai.")
             } catch (t: Throwable) {
                 logUi("GAGAL ${t.javaClass.simpleName}: ${t.message}")
             }
