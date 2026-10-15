@@ -11,7 +11,7 @@ android {
         applicationId = "com.cubix.launcher"
         minSdk = 21
         targetSdk = 33
-        versionCode = 1
+        versionCode = 2
         versionName = "0.1"
 
         // Khusus 32-bit ARM
@@ -34,8 +34,21 @@ android {
         }
     }
 
+    signingConfigs {
+        create("fixed") {
+            storeFile = rootProject.file("cubix.keystore")
+            storePassword = "cubix123"
+            keyAlias = "cubix"
+            keyPassword = "cubix123"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
+            signingConfig = signingConfigs.getByName("fixed")
             isMinifyEnabled = false
         }
     }

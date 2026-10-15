@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Supaya Android 11+ boleh melihat paket Minecraft -->
     <queries>
         <package android:name="com.mojang.minecraftpe" />
@@ -9,6 +16,7 @@
     <application
         android:allowBackup="false"
         android:label="Cubix"
+        android:hardwareAccelerated="true"
         android:extractNativeLibs="true">
 
         <activity
@@ -18,6 +26,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <!-- Kelasnya diambil dari dex Minecraft lewat McLoader saat runtime -->
+        <activity
+            android:name="com.mojang.minecraftpe.MainActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|fontScale|colorMode|locale|layoutDirection">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="minecraftpe" />
         </activity>
     </application>
 </manifest>

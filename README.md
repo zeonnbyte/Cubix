@@ -13,8 +13,11 @@ Kerangka launcher Minecraft Bedrock untuk Android 32-bit.
 - `cpp/launcher.cpp` : titik masuk native untuk hook/mod nanti.
 - ABI dikunci ke `armeabi-v7a` di `app/build.gradle.kts`.
 
+## Cara kerja jalankan Minecraft
+- `McLoader.kt` ekstrak `.so` armeabi-v7a dari APK Minecraft (termasuk split APK), ganti class loader app dengan DexClassLoader dex Minecraft, dan daftarkan APK Minecraft sebagai asset.
+- Manifest mendeklarasikan `com.mojang.minecraftpe.MainActivity` (NativeActivity, lib `minecraftpe`), kelasnya diambil dari dex Minecraft saat runtime.
+
 ## Belum ada
-- Menjalankan game penuh (memuat `MainActivity` milik Minecraft lewat class loader).
 - Hook/mod. Offset di `libminecraftpe.so` beda tiap versi.
 
 ## Catatan

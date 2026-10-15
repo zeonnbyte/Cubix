@@ -1,29 +1,17 @@
 package com.cubix.launcher
 
 import android.app.Activity
+import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
-import java.io.File
 
-/**
- * Kerangka dasar launcher: cek Minecraft terinstall, cek arsitektur (harus armeabi-v7a),
- * salin library native-nya, lalu load ke proses launcher.
- *
- * Ini baru tahap "loader check". Menjalankan game penuh (class loader MainActivity
- * milik Minecraft) adalah langkah berikutnya.
- */
 class LauncherActivity : Activity() {
-
-    companion object {
-        const val MC_PACKAGE = "com.mojang.minecraftpe"
-
-        // Urutan load penting: dependensi dulu, game terakhir
-        val MC_LIBS = listOf("libc++_shared.so", "libfmod.so", "libminecraftpe.so")
-    }
 
     private lateinit var logView: TextView
 
@@ -34,13 +22,18 @@ class LauncherActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 48, 48, 48)
         }
-        logView = TextView(this)
-        val btn = Button(this).apply {
-            text = "Cek & Load Minecraft"
-            setOnClickListener { checkAndLoad() }
+        val btnRun = Button(this).apply {
+            text = "Jalankan Minecraft (Cubix)"
+            setOnClickListener { runMinecraft() }
         }
-        root.addView(btn)
-        root.addView(logView)
+        val btnPlain = Button(this).apply {
+            text = "Buka Minecraft biasa"
+            setOnClickListener { openPlain() }
+        }
+        logView = TextView(this)
+        root.addView(btnRun)
+        root.addView(btnPlain)
+        root.addView(ScrollView(this).apply { addView(logView) })
         setContentView(root)
     }
 
@@ -48,40 +41,50 @@ class LauncherActivity : Activity() {
         logView.append(msg + "\n")
     }
 
-    private fun checkAndLoad() {
+    private fun mcInfo(): ApplicationInfo? = try {
+        packageManager.getApplicationInfo(McLoader.MC_PACKAGE, 0)
+    } catch (e: PackageManager.NameNotFoundException) {
+        null
+    }
+
+    private fun openPlain() {
+        val i = packageManager.getLaunchIntentForPackage(McLoader.MC_PACKAGE)
+        if (i == null) {
+            logView.text = ""
+            log("Minecraft belum terinstall.")
+        } else {
+            startActivity(i)
+        }
+    }
+
+    private fun runMinecraft() {
         logView.text = ""
         log("ABI HP: ${Build.SUPPORTED_ABIS.joinToString()}")
 
-        val info = try {
-            packageManager.getApplicationInfo(MC_PACKAGE, 0)
-        } catch (e: PackageManager.NameNotFoundException) {
+        val info = mcInfo()
+        if (info == null) {
             log("Minecraft belum terinstall.")
             return
         }
-
-        val libDir = File(info.nativeLibraryDir)
-        log("Lib dir Minecraft: ${libDir.absolutePath}")
-
-        val missing = MC_LIBS.filter { !File(libDir, it).exists() }
-        if (missing.isNotEmpty()) {
-            log("Library tidak ketemu: $missing")
-            log("Kemungkinan Minecraft ini bukan build armeabi-v7a, atau libnya masih di dalam APK.")
-            return
-        }
-
-        // Salin ke folder milik launcher supaya boleh di-load
-        val dest = File(filesDir, "mclibs").apply { mkdirs() }
-        for (name in MC_LIBS) {
-            File(libDir, name).copyTo(File(dest, name), overwrite = true)
-        }
+        log("APK Minecraft: ${McLoader.apkPaths(info).size} file")
 
         try {
-            for (name in MC_LIBS) {
-                System.load(File(dest, name).absolutePath)
-                log("OK load: $name")
+            val libs = McLoader.extractLibs(this, info)
+            if (!libs.contains("libminecraftpe.so")) {
+                log("libminecraftpe.so (armeabi-v7a) tidak ada di APK Minecraft.")
+                log("Install Minecraft versi armeabi-v7a (32-bit).")
+                return
             }
+            log("Library diekstrak: ${libs.joinToString()}")
+
+            McLoader.prepare(this, info)
+            log("Class loader siap, menjalankan Minecraft...")
+
+            val intent = Intent().setClassName(packageName, McLoader.MC_MAIN)
+            startActivity(intent)
         } catch (t: Throwable) {
-            log("Gagal load: ${t.message}")
+            log("Gagal: ${t.javaClass.simpleName}: ${t.message}")
+            t.cause?.let { log("Penyebab: ${it.javaClass.simpleName}: ${it.message}") }
         }
     }
 }
