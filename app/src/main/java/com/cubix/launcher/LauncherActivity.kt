@@ -17,8 +17,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import java.io.File
-import java.io.RandomAccessFile
-import java.util.zip.CRC32
+import java.io.OutputStream
 
 class LauncherActivity : Activity() {
 
@@ -48,21 +47,41 @@ class LauncherActivity : Activity() {
             text = "Salin log crash"
             setOnClickListener { showCrashLog() }
         }
-        val btnExport = Button(this).apply {
-            text = "Ekspor libmaesdk.so ke Download"
-            setOnClickListener { exportMaesdk() }
+        val btnAnalyze = Button(this).apply {
+            text = "1. Ekstrak & analisis library"
+            setOnClickListener { analyzeLibs() }
+        }
+        val btnExportSmall = Button(this).apply {
+            text = "2. Ekspor library kecil ke Download"
+            setOnClickListener { exportSmallLibs() }
+        }
+        val btnExportMc = Button(this).apply {
+            text = "3. Ekspor libminecraftpe.so ke Download"
+            setOnClickListener { exportLibs(listOf("libminecraftpe.so")) }
         }
         logView = TextView(this).apply { setTextIsSelectable(true) }
         root.addView(btnRun)
         root.addView(btnPlain)
         root.addView(btnLog)
-        root.addView(btnExport)
-        root.addView(ScrollView(this).apply { addView(logView) })
+        root.addView(btnAnalyze)
+        root.addView(btnExportSmall)
+        root.addView(btnExportMc)
+        root.addView(
+            ScrollView(this).apply { addView(logView) },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        )
         setContentView(root)
     }
 
     private fun log(msg: String) {
         logView.append(msg + "\n")
+    }
+
+    /** Aman dipanggil dari thread mana pun. */
+    private fun logUi(msg: String) {
+        runOnUiThread { logView.append(msg + "\n") }
     }
 
     private fun mcInfo(): ApplicationInfo? = try {
@@ -92,67 +111,130 @@ class LauncherActivity : Activity() {
             runOnUiThread {
                 val out = if (text.isBlank()) "Log kosong" else text
                 logView.text = "(sudah disalin ke clipboard)\n" + out
-                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("cubix log", out))
+                copyToClipboard("cubix log", out)
             }
         }.start()
     }
 
-    /** Salin libmaesdk.so hasil ekstrak ke folder Download supaya bisa dikirim buat dibongkar. */
-    private fun exportMaesdk() {
+    private fun copyToClipboard(label: String, text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText(label, text))
+    }
+
+    /** Tulis ke folder Download lewat [writer]. Return teks lokasi, atau pesan gagal. */
+    private fun saveToDownloads(name: String, mime: String, writer: (OutputStream) -> Unit): String {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return "GAGAL bikin $name di Download"
+            val out = contentResolver.openOutputStream(uri)
+                ?: return "GAGAL buka tulisan $name di Download"
+            out.use { writer(it) }
+            return "Download/$name"
+        }
+        val dst = File(getExternalFilesDir(null), name)
+        dst.outputStream().use { writer(it) }
+        return dst.absolutePath
+    }
+
+    /** Ekstrak library Minecraft (kalau belum). Return daftar file .so, atau null kalau gagal. */
+    private fun ensureExtracted(): List<String>? {
+        val info = mcInfo()
+        if (info == null) {
+            logUi("Minecraft belum terinstall.")
+            return null
+        }
+        return try {
+            McLoader.extractLibs(this, info)
+        } catch (t: Throwable) {
+            logUi("Gagal ekstrak: ${t.javaClass.simpleName}: ${t.message}")
+            null
+        }
+    }
+
+    /** Tombol 1: ekstrak library tanpa menjalankan game, lalu buat laporan (tampil, clipboard, Download). */
+    private fun analyzeLibs() {
+        logView.text = "Mengekstrak dan menganalisis library, tunggu sebentar...\n"
+        Thread {
+            val report = StringBuilder()
+            report.append("Cubix fix_11 laporan library\n")
+            report.append("ABI HP: ").append(Build.SUPPORTED_ABIS.joinToString()).append('\n')
+            try {
+                @Suppress("DEPRECATION")
+                val pi = packageManager.getPackageInfo(McLoader.MC_PACKAGE, 0)
+                @Suppress("DEPRECATION")
+                report.append("Minecraft ${pi.versionName} (code ${pi.versionCode})\n")
+            } catch (_: Throwable) {
+            }
+            val libs = ensureExtracted()
+            if (libs == null) {
+                return@Thread
+            }
+            report.append("Jumlah library: ${libs.size}\n\n")
+            val dir = McLoader.libDir(this)
+            for (name in libs.sorted()) {
+                val f = File(dir, name)
+                report.append(McLoader.analyze(f)).append('\n')
+            }
+            val text = report.toString()
+            val where = try {
+                saveToDownloads("cubix_report.txt", "text/plain") { it.write(text.toByteArray()) }
+            } catch (t: Throwable) {
+                "GAGAL simpan laporan: ${t.message}"
+            }
+            runOnUiThread {
+                logView.text = "(laporan disalin ke clipboard, juga disimpan: $where)\n\n$text"
+                copyToClipboard("cubix report", text)
+            }
+        }.start()
+    }
+
+    /** Tombol 2: salin library kecil (bukan libminecraftpe/libfmod/libc++_shared) ke Download. */
+    private fun exportSmallLibs() {
         logView.text = ""
-        val src = File(filesDir, "mclibs/libmaesdk.so")
-        if (!src.exists()) {
-            log("libmaesdk.so belum diekstrak. Tekan \"Jalankan Minecraft\" sekali dulu, lalu coba lagi.")
+        Thread {
+            val libs = ensureExtracted() ?: return@Thread
+            val skip = setOf("libminecraftpe.so", "libfmod.so", "libc++_shared.so")
+            val names = libs.filter { it !in skip }.sorted()
+            exportLibsNow(names)
+        }.start()
+    }
+
+    /** Dipakai tombol 3 (dan 2): ekspor library bernama [names] ke Download. */
+    private fun exportLibs(names: List<String>) {
+        logView.text = ""
+        Thread {
+            if (ensureExtracted() == null) return@Thread
+            exportLibsNow(names)
+        }.start()
+    }
+
+    private fun exportLibsNow(names: List<String>) {
+        val dir = McLoader.libDir(this)
+        if (names.isEmpty()) {
+            logUi("Tidak ada library untuk diekspor.")
             return
         }
-        try {
-            val crc = CRC32()
-            src.inputStream().use { ins ->
-                val buf = ByteArray(65536)
-                while (true) {
-                    val n = ins.read(buf)
-                    if (n < 0) break
-                    crc.update(buf, 0, n)
-                }
+        for (name in names) {
+            val src = File(dir, name)
+            if (!src.exists()) {
+                logUi("$name: tidak ada di hasil ekstraksi, dilewati")
+                continue
             }
-            log("libmaesdk.so: ${src.length()} byte, crc32=${java.lang.Long.toHexString(crc.value)}")
-
-            // Bandingkan dengan byte yang tercatat di memori saat crash (code@e0e3b6ee, file off 0x1e86ee)
-            RandomAccessFile(src, "r").use { raf ->
-                val off = 0x1e86eeL
-                if (raf.length() >= off + 64) {
-                    raf.seek(off)
-                    val b = ByteArray(64)
-                    raf.readFully(b)
-                    log("byte di file @0x1e86ee: " + b.joinToString("") { "%02x".format(it) })
-                }
-            }
-
-            val name = "libmaesdk.so"
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, name)
-                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
-                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                }
-                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                if (uri == null) {
-                    log("Gagal bikin file di folder Download.")
-                    return
-                }
-                contentResolver.openOutputStream(uri)?.use { out ->
+            try {
+                val where = saveToDownloads(name, "application/octet-stream") { out ->
                     src.inputStream().use { it.copyTo(out) }
                 }
-                log("Tersalin ke Download/$name")
-            } else {
-                val dst = File(getExternalFilesDir(null), name)
-                src.copyTo(dst, overwrite = true)
-                log("Tersalin ke ${dst.absolutePath}")
+                logUi("$name (${src.length()} byte) -> $where")
+            } catch (t: Throwable) {
+                logUi("$name: GAGAL ${t.javaClass.simpleName}: ${t.message}")
             }
-        } catch (t: Throwable) {
-            log("Gagal ekspor: ${t.javaClass.simpleName}: ${t.message}")
         }
+        logUi("Selesai.")
     }
 
     private fun openPlain() {
@@ -191,8 +273,8 @@ class LauncherActivity : Activity() {
                 return
             }
             log("Library diekstrak: ${libs.joinToString()}")
-            if (libs.contains("libmaesdk.so")) {
-                log("libmaesdk.so aktif (patch bypass init_array & safe string diterapkan).")
+            if (libs.contains("libpairipcore.so")) {
+                log("PERHATIAN: Minecraft ini memakai PairIP (libpairipcore.so). Library bawaan seperti libmaesdk.so kemungkinan terenkripsi dan akan crash. Pakai tombol 1-3 untuk analisis.")
             }
 
             McLoader.prepare(this, info)

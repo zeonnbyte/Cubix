@@ -11,8 +11,8 @@ android {
         applicationId = "com.cubix.launcher"
         minSdk = 21
         targetSdk = 33
-        versionCode = 10
-        versionName = "0.1-fix10"
+        versionCode = 11
+        versionName = "0.1-fix11"
 
         // Khusus 32-bit ARM
         ndk {

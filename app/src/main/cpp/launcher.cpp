@@ -133,16 +133,9 @@ static void handler(int sig, siginfo_t* si, void* ctx) {
     uintptr_t pc = uc->uc_mcontext.arm_pc;
     uintptr_t lr = uc->uc_mcontext.arm_lr;
     uintptr_t sp = uc->uc_mcontext.arm_sp;
-
-    // Pemulihan otomatis jika crash terjadi di dalam libmaesdk (telemetry crash)
     Region* pr = find_region(pc);
-    uintptr_t fault_addr = (uintptr_t)(si ? si->si_addr : nullptr);
-    if (fault_addr == 0x1c || (pr && strstr(pr->path, "libmaesdk"))) {
-        LOGW("Intersepsi crash libmaesdk (sig=%d, pc=%08lx, fault=%08lx). Melanjutkan eksekusi ke lr=%08lx...",
-             sig, (unsigned long)pc, (unsigned long)fault_addr, (unsigned long)lr);
-        uc->uc_mcontext.arm_pc = lr;
-        return; // Lanjutkan proses tanpa exit!
-    }
+    // fix_11: tidak ada lagi "pemulihan otomatis". Crash dicatat apa adanya lalu diserahkan
+    // ke handler bawaan Android supaya penyebab aslinya kelihatan.
 #endif
 
     LOGI("==== Cubix crash handler: sig=%d fault_addr=%p ====", sig, si ? si->si_addr : nullptr);
@@ -213,31 +206,10 @@ static void install_handler() {
     for (int i = 0; i < NSIGS; i++) sigaction(SIGS[i], &sa, &g_old[i]);
 }
 
-/**
- * Global override untuk simbol basic_string constructor libc++ NDK 18:
- * _ZNSt6__ndk112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC2B8ne180000ILi0EEEPKc
- * Memberikan implementasi aman bagi pemanggil di libmaesdk tanpa crash null dereference.
- */
-extern "C" __attribute__((visibility("default")))
-void _ZNSt6__ndk112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC2B8ne180000ILi0EEEPKc(char* self, const char* s) {
-    if (!self) return;
-    ((uint32_t*)self)[0] = 0;
-    ((uint32_t*)self)[1] = 0;
-    ((uint32_t*)self)[2] = 0;
-    if (!s) return;
-    int len = 0;
-    while (s[len] && len < 10) {
-        self[len + 1] = s[len];
-        len++;
-    }
-    self[0] = (char)(len << 1);
-    self[len + 1] = 0;
-}
-
 // Titik masuk native. Hook/mod nantinya dipasang di sini setelah
 // libminecraftpe.so ter-load.
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM*, void*) {
     install_handler();
-    LOGI("libcubix loaded (armeabi-v7a), crash handler & overrides terpasang");
+    LOGI("libcubix loaded (armeabi-v7a), crash handler terpasang (fix_11, tanpa recovery)");
     return JNI_VERSION_1_6;
 }

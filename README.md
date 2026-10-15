@@ -2,28 +2,29 @@
 
 Kerangka launcher Minecraft Bedrock untuk Android 32-bit.
 
-## Cara pakai
-1. Buka folder ini di Android Studio (otomatis bikin Gradle wrapper).
-2. Install NDK + CMake 3.22.1 lewat SDK Manager.
-3. Build dan install ke HP.
-4. Buka app, tekan "Jalankan Minecraft (Cubix)". Log-nya muncul di layar.
+## Status fix_11
+Minecraft dari Google Play dilindungi **PairIP**. `libmaesdk.so` bawaannya `NEEDED libpairipcore.so`
+dan sebagian kodenya terenkripsi (diverifikasi dari entropi). Library itu tidak bisa dijalankan dari
+paket lain, dan patch byte di offset tetap malah menimpa data terenkripsi. Karena itu:
+
+- Patch byte `libmaesdk.so` dan crash handler "auto-recovery" **dihapus**.
+- Library diekstrak apa adanya dari APK Minecraft.
+- Rencana: ganti `libmaesdk`, `libgxcore`, `libPlayFabMultiplayer` dengan stub buatan sendiri
+  (seperti Levi Launcher), dimuat duluan lewat `System.loadLibrary`.
+
+## Cara pakai (tahap analisis)
+1. Build dan install, buka app.
+2. Tekan **1. Ekstrak & analisis library**. Laporan disalin ke clipboard dan disimpan ke `Download/cubix_report.txt`.
+3. Tekan **2. Ekspor library kecil ke Download**.
+4. Tekan **3. Ekspor libminecraftpe.so ke Download**.
+5. Kirim `cubix_report.txt` dan file-file `.so` hasil ekspor.
+
+Tombol "Jalankan Minecraft (Cubix)" masih ada untuk uji coba, tapi diperkirakan masih crash
+sampai stub library selesai.
 
 ## Isi
-- `LauncherActivity.kt` : cek Minecraft terinstall, salin library, siapkan class loader, dan jalankan MainActivity.
-- `McLoader.kt` :
-  - Ekstrak library native armeabi-v7a dari APK Minecraft ke folder internal `files/mclibs`.
-  - Filter split APK: hanya memasukkan file APK yang benar-benar memuat `.dex` ke `DexClassLoader` agar terbebas dari peringatan `classes.dex: Entry not found`.
-  - Auto-patch `libmaesdk.so`: bypass crash `init_array[0]` telemetry dan menyediakan constructor `basic_string` yang aman dari null pointer dereference.
-- `cpp/launcher.cpp` :
-  - Crash handler native dengan auto-recovery jika terjadi fault di `libmaesdk.so`.
-  - Global override untuk `_ZNSt6__ndk112basic_string...` agar teresolusi secara aman sebelum library lain memanggilnya.
+- `LauncherActivity.kt` : UI sederhana, ekstrak/analisis/ekspor library, jalankan MainActivity.
+- `McLoader.kt` : ekstrak `.so` armeabi-v7a dari APK Minecraft (termasuk split APK), analisis library
+  (ukuran, ELF, sebutan `libpairipcore`, blok berentropi tinggi), dan ganti class loader dengan `DexClassLoader`.
+- `cpp/launcher.cpp` : crash handler yang hanya mencatat (pc, lr, register, stack) lalu menyerahkan ke handler Android.
 - ABI dikunci ke `armeabi-v7a` di `app/build.gradle.kts`.
-
-## Cara kerja jalankan Minecraft
-- `McLoader.kt` mengekstrak `.so` armeabi-v7a dari APK Minecraft (termasuk split APK), mempatch proteksi/crash pada `libmaesdk.so`, mengganti class loader app dengan `DexClassLoader` dex Minecraft, dan mendaftarkan APK Minecraft sebagai asset.
-- Manifest mendeklarasikan `com.mojang.minecraftpe.MainActivity` (NativeActivity, lib `minecraftpe`), kelasnya diambil dari dex Minecraft saat runtime.
-
-## Catatan Perbaikan Terbaru
-- **Pembersihan jniLibs**: Folder `jniLibs/arm64-v8a` yang salah arsitektur telah dihapus.
-- **Pencegahan Crash libmaesdk.so**: Telah ditangani di level disk patch (di `McLoader`) dan di level runtime hook/override (di `launcher.cpp`).
-- **DexClassLoader Clean**: Split APK non-dex disaring sehingga Dalvik tidak lagi memicu error pencarian `classes.dex`.

@@ -8,41 +8,25 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.lang.reflect.Field
 import java.util.zip.ZipFile
+import kotlin.math.ln
 
 /**
  * Menyiapkan proses Cubix supaya bisa menjalankan Minecraft di dalam prosesnya sendiri:
- * 1. Ekstrak semua .so armeabi-v7a dari APK Minecraft (termasuk split APK).
- * 2. Patch perlindungan / crash pada libmaesdk.so (init_array & basic_string).
- * 3. Ganti class loader aplikasi dengan DexClassLoader yang membaca dex Minecraft (tanpa split APK non-dex).
- * 4. Daftarkan APK Minecraft sebagai sumber asset/resource.
+ * 1. Ekstrak semua .so armeabi-v7a dari APK Minecraft (termasuk split APK) TANPA diubah.
+ * 2. Ganti class loader aplikasi dengan DexClassLoader yang membaca dex Minecraft (tanpa split APK non-dex).
+ * 3. Daftarkan APK Minecraft sebagai sumber asset/resource.
+ * 4. Analisis library (analyze) untuk mengetahui mana yang dilindungi PairIP.
+ *
+ * Catatan fix_11: patch byte libmaesdk.so DIHAPUS. Library itu dilindungi PairIP (kodenya
+ * terenkripsi), jadi patch di offset tetap malah menimpa data terenkripsi.
  */
 object McLoader {
     const val MC_PACKAGE = "com.mojang.minecraftpe"
     const val MC_MAIN = "com.mojang.minecraftpe.MainActivity"
     private const val ABI_DIR = "lib/armeabi-v7a/"
-    private const val PATCH_VERSION = "cubix_v2"
 
-    // Signature dan patch untuk libmaesdk.so init_array[0] (offset 0x20a480)
-    // Asli: push {r7, lr}; mov r7, sp (80 b5 6f 46)
-    // Patch: bx lr; nop (70 47 00 bf)
-    private val INIT_SIG = byteArrayOf(0x80.toByte(), 0xb5.toByte(), 0x6f.toByte(), 0x46.toByte())
-    private val INIT_PATCH = byteArrayOf(0x70.toByte(), 0x47.toByte(), 0x00.toByte(), 0xbf.toByte())
-
-    // Signature dan patch untuk libmaesdk.so basic_string constructor (offset 0x1e8708)
-    // Asli: 24 7d 82 c8 (ldrb r4, [r4, #0x14]; ldm r0!, {r1, r7})
-    private val STR_SIG = byteArrayOf(0x24.toByte(), 0x7d.toByte(), 0x82.toByte(), 0xc8.toByte())
-    // 70-byte Thumb safe basic_string: zero memory, handle null, safe SSO copy
-    private val STR_PATCH = byteArrayOf(
-        0x00, 0x22, 0x00, 0x29, 0xc0.toByte(), 0xe9.toByte(), 0x00, 0x22,
-        0x82.toByte(), 0x60, 0x08, 0xbf.toByte(), 0x70, 0x47, 0x10.toByte(), 0xb5.toByte(),
-        0x0a, 0x78, 0x4f, 0xf0.toByte(), 0x00, 0x0c, 0x6a, 0xb1.toByte(),
-        0x00, 0xf1.toByte(), 0x01, 0x0e, 0x01, 0x31, 0x00, 0x24,
-        0x63, 0x1c, 0x08, 0x2c, 0x0e, 0xf8.toByte(), 0x04, 0x20,
-        0x05, 0xd8.toByte(), 0x0a, 0x5d, 0x1c, 0x46, 0x00, 0x2a,
-        0xf6.toByte(), 0xd1.toByte(), 0x00, 0xe0.toByte(), 0x00, 0x23, 0x59, 0x00,
-        0x01, 0x70, 0x18, 0x44, 0x80.toByte(), 0xf8.toByte(), 0x01, 0xc0.toByte(),
-        0xbd.toByte(), 0xe8.toByte(), 0x10, 0x40, 0x70, 0x47
-    )
+    // Ganti nilai ini kalau isi mclibs harus diekstrak ulang (mis. setelah logika ekstraksi berubah).
+    private const val PATCH_VERSION = "cubix_v3_clean"
 
     @Volatile
     private var prepared = false
@@ -79,56 +63,11 @@ object McLoader {
         }.ifEmpty { listOf(info.sourceDir) }
     }
 
-    /**
-     * Patch perlindungan / telemetry crash pada libmaesdk.so:
-     * 1. Bypass init_array[0] (0x20a480) agar tidak mengeksekusi setup string telemetry yang crash.
-     * 2. Replace basic_string constructor (0x1e8708) dengan implementasi aman tanpa crash null deref.
-     */
-    fun patchMaesdk(file: File): Boolean {
-        if (!file.exists() || !file.canWrite()) return false
-        try {
-            RandomAccessFile(file, "rw").use { raf ->
-                val len = raf.length()
+    fun libDir(ctx: Context): File = File(ctx.filesDir, "mclibs")
 
-                // Patch 1: init_array[0] di offset 0x20a480
-                val offInit = 0x20a480L
-                if (len >= offInit + INIT_SIG.size) {
-                    raf.seek(offInit)
-                    val buf = ByteArray(INIT_SIG.size)
-                    raf.readFully(buf)
-                    if (buf.contentEquals(INIT_SIG)) {
-                        raf.seek(offInit)
-                        raf.write(INIT_PATCH)
-                    }
-                }
-
-                // Patch 2: basic_string di offset 0x1e8708
-                val offStr = 0x1e8708L
-                if (len >= offStr + STR_SIG.size) {
-                    raf.seek(offStr)
-                    val buf = ByteArray(STR_SIG.size)
-                    raf.readFully(buf)
-                    if (buf.contentEquals(STR_SIG)) {
-                        raf.seek(offStr)
-                        raf.write(STR_PATCH)
-                        // Pad sisa 84 bytes dengan NOP (0x00, 0xbf)
-                        val remaining = 84 - STR_PATCH.size
-                        if (remaining > 0) {
-                            val nops = ByteArray(remaining) { if (it % 2 == 0) 0x00 else 0xbf.toByte() }
-                            raf.write(nops)
-                        }
-                    }
-                }
-            }
-            return true
-        } catch (_: Throwable) {
-            return false
-        }
-    }
-
-    /** Ekstrak library native dari APK, return daftar nama file yang berhasil diekstrak. */
+    /** Ekstrak library native dari APK apa adanya, return daftar nama file yang berhasil diekstrak. */
     fun extractLibs(ctx: Context, info: ApplicationInfo): List<String> {
-        val dest = File(ctx.filesDir, "mclibs")
+        val dest = libDir(ctx)
         val stamp = File(dest, "stamp.txt")
         val key = "${ctx.packageManager.getPackageInfo(MC_PACKAGE, 0).lastUpdateTime}:${info.sourceDir}:$PATCH_VERSION"
         if (stamp.exists() && stamp.readText() == key && File(dest, "libminecraftpe.so").exists()) {
@@ -153,15 +92,135 @@ object McLoader {
                 }
             }
         }
-
-        // Terapkan patch pada libmaesdk.so hasil ekstrak
-        val maesdk = File(dest, "libmaesdk.so")
-        if (maesdk.exists()) {
-            patchMaesdk(maesdk)
-        }
-
         stamp.writeText(key)
         return names
+    }
+
+    // ------------------------------------------------------------------
+    // Analisis library: ukuran, jenis ELF, apakah menyebut libpairipcore, dan blok "terenkripsi".
+    // ------------------------------------------------------------------
+
+    private const val PAGE = 4096
+    private const val HIGH_ENTROPY = 7.5
+
+    /** True kalau file memuat urutan byte [pat] di mana pun (dibaca streaming, hemat memori). */
+    private fun containsBytes(file: File, pat: ByteArray): Boolean {
+        val chunk = 65536
+        val buf = ByteArray(chunk + pat.size)
+        file.inputStream().use { ins ->
+            var carry = 0
+            while (true) {
+                val n = ins.read(buf, carry, chunk)
+                if (n < 0) return false
+                val total = carry + n
+                var i = 0
+                val last = total - pat.size
+                while (i <= last) {
+                    if (buf[i] == pat[0]) {
+                        var j = 1
+                        while (j < pat.size && buf[i + j] == pat[j]) j++
+                        if (j == pat.size) return true
+                    }
+                    i++
+                }
+                carry = minOf(pat.size - 1, total)
+                System.arraycopy(buf, total - carry, buf, 0, carry)
+            }
+        }
+    }
+
+    /** Ringkasan satu library dalam bentuk teks (beberapa baris). */
+    fun analyze(file: File): String {
+        val size = file.length()
+        val sb = StringBuilder()
+        sb.append(file.name).append('\n')
+        sb.append("  ukuran      : ").append(size).append(" byte\n")
+
+        // Header ELF
+        try {
+            RandomAccessFile(file, "r").use { raf ->
+                val h = ByteArray(20)
+                raf.readFully(h)
+                val isElf = h[0] == 0x7f.toByte() && h[1] == 'E'.code.toByte() &&
+                    h[2] == 'L'.code.toByte() && h[3] == 'F'.code.toByte()
+                if (isElf) {
+                    val cls = if (h[4].toInt() == 1) "ELF32" else "ELF64"
+                    val machine = (h[18].toInt() and 0xff) or ((h[19].toInt() and 0xff) shl 8)
+                    val mach = when (machine) {
+                        0x28 -> "ARM"
+                        0xb7 -> "AArch64"
+                        else -> "mesin=0x" + machine.toString(16)
+                    }
+                    sb.append("  format      : $cls $mach\n")
+                } else {
+                    sb.append("  format      : BUKAN ELF\n")
+                }
+            }
+        } catch (t: Throwable) {
+            sb.append("  format      : gagal baca (${t.message})\n")
+        }
+
+        // Menyebut libpairipcore? (tanda dilindungi PairIP, atau library pelindung itu sendiri)
+        val pairip = try {
+            containsBytes(file, "libpairipcore.so".toByteArray(Charsets.US_ASCII))
+        } catch (t: Throwable) {
+            null
+        }
+        sb.append("  libpairipcore: ").append(
+            when (pairip) {
+                true -> "YA (menyebut libpairipcore.so)"
+                false -> "tidak"
+                null -> "gagal cek"
+            }
+        ).append('\n')
+
+        // Blok berentropi tinggi (kemungkinan kode terenkripsi) per halaman 4 KB
+        var highPages = 0
+        var totalPages = 0
+        val runs = mutableListOf<String>()
+        var runStart = -1L
+        try {
+            RandomAccessFile(file, "r").use { raf ->
+                val buf = ByteArray(PAGE)
+                val cnt = IntArray(256)
+                var off = 0L
+                while (off < size) {
+                    val n = minOf(PAGE.toLong(), size - off).toInt()
+                    raf.seek(off)
+                    raf.readFully(buf, 0, n)
+                    totalPages++
+                    var high = false
+                    if (n >= 1024) {
+                        java.util.Arrays.fill(cnt, 0)
+                        for (i in 0 until n) cnt[buf[i].toInt() and 0xff]++
+                        var e = 0.0
+                        for (c in cnt) {
+                            if (c == 0) continue
+                            val p = c.toDouble() / n
+                            e -= p * (ln(p) / ln(2.0))
+                        }
+                        high = e > HIGH_ENTROPY
+                    }
+                    if (high) {
+                        highPages++
+                        if (runStart < 0) runStart = off
+                    } else if (runStart >= 0) {
+                        if (runs.size < 8) runs.add("0x" + runStart.toString(16) + "-0x" + off.toString(16))
+                        runStart = -1L
+                    }
+                    off += n
+                }
+                if (runStart >= 0 && runs.size < 8) {
+                    runs.add("0x" + runStart.toString(16) + "-0x" + size.toString(16))
+                }
+            }
+            sb.append("  entropi tinggi: $highPages dari $totalPages halaman")
+            if (runs.isNotEmpty()) sb.append("  blok: ").append(runs.joinToString(", "))
+            sb.append('\n')
+        } catch (t: Throwable) {
+            sb.append("  entropi     : gagal hitung (${t.message})\n")
+        }
+        return sb.toString()
     }
 
     private fun findField(obj: Any, name: String): Field {
@@ -182,7 +241,7 @@ object McLoader {
         val app = ctx.applicationContext
         val allApkPaths = apkPaths(info)
         val dexPaths = dexApkPaths(info)
-        val libDir = File(ctx.filesDir, "mclibs")
+        val libDir = libDir(ctx)
 
         // Asset dan resource Minecraft ikut terbaca oleh activity baru
         val ai = app.applicationInfo
