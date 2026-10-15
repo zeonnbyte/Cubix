@@ -81,7 +81,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.extensions)
     implementation(libs.billing)
     implementation(libs.conscrypt.android)
-    implementation(libs.androidx.games.activity)
+    api(libs.androidx.games.activity)
     implementation(libs.core.splashscreen)
     implementation(libs.androidx.preference.ktx)
     implementation(libs.appcompat)

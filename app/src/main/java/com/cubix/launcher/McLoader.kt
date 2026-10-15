@@ -294,11 +294,20 @@ object McLoader {
             }
         }
 
-        // Urutan sama dengan Levi: c++_shared, HttpClient, stub SDK, fmod, decoder, MallocRedirect.
-        for (name in listOf(
-            "c++_shared", "HttpClient.Android", "PlayFabMultiplayer", "maesdk",
-            "fmod", "MediaDecoders_Android", "MallocRedirect"
-        )) loadOne(name)
+        // Urutan mengikuti Levi dan bergantung versi Minecraft (1.21 biasa = tata letak lama):
+        //   >= 1.21.130   : HttpClient.Android ikut dimuat setelah c++_shared
+        //   >= 1.26.70.20 : PlayFabMultiplayer, maesdk (stub), MallocRedirect ikut dimuat
+        val mcVer = try {
+            ctx.packageManager.getPackageInfo(MC_PACKAGE, 0).versionName ?: ""
+        } catch (_: Throwable) { "" }
+        sb.append("versi Minecraft: ").append(mcVer.ifEmpty { "?" }).append('\n')
+        val order = mutableListOf("c++_shared")
+        if (atLeast(mcVer, "1.21.130")) order.add("HttpClient.Android")
+        if (atLeast(mcVer, "1.26.70.20")) { order.add("PlayFabMultiplayer"); order.add("maesdk") }
+        order.add("fmod")
+        order.add("MediaDecoders_Android")
+        if (atLeast(mcVer, "1.26.70.20")) order.add("MallocRedirect")
+        for (name in order) loadOne(name)
 
         File(dir, "libminecraftpe.so").setReadOnly()
         System.loadLibrary("minecraftpe")
@@ -307,6 +316,17 @@ object McLoader {
         // gxcore dimuat setelah minecraftpe (urutan Levi); kegagalan dicatat, tidak fatal.
         loadOne("gxcore")
         return sb.toString()
+    }
+
+    private fun atLeast(cur: String, target: String): Boolean {
+        val c = cur.replace(Regex("[^0-9.]"), "").split(".")
+        val t = target.split(".")
+        for (i in 0 until maxOf(c.size, t.size)) {
+            val a = c.getOrNull(i)?.toIntOrNull() ?: 0
+            val b = t.getOrNull(i)?.toIntOrNull() ?: 0
+            if (a != b) return a > b
+        }
+        return true
     }
 
     /** Isi extra Firebase dari resource string Minecraft (seperti yang dilakukan Levi). */
