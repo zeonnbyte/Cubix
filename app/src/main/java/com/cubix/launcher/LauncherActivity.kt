@@ -3,16 +3,22 @@ package com.cubix.launcher
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import java.io.File
+import java.io.RandomAccessFile
+import java.util.zip.CRC32
 
 class LauncherActivity : Activity() {
 
@@ -42,10 +48,15 @@ class LauncherActivity : Activity() {
             text = "Salin log crash"
             setOnClickListener { showCrashLog() }
         }
+        val btnExport = Button(this).apply {
+            text = "Ekspor libmaesdk.so ke Download"
+            setOnClickListener { exportMaesdk() }
+        }
         logView = TextView(this).apply { setTextIsSelectable(true) }
         root.addView(btnRun)
         root.addView(btnPlain)
         root.addView(btnLog)
+        root.addView(btnExport)
         root.addView(ScrollView(this).apply { addView(logView) })
         setContentView(root)
     }
@@ -85,6 +96,63 @@ class LauncherActivity : Activity() {
                 cm.setPrimaryClip(ClipData.newPlainText("cubix log", out))
             }
         }.start()
+    }
+
+    /** Salin libmaesdk.so hasil ekstrak ke folder Download supaya bisa dikirim buat dibongkar. */
+    private fun exportMaesdk() {
+        logView.text = ""
+        val src = File(filesDir, "mclibs/libmaesdk.so")
+        if (!src.exists()) {
+            log("libmaesdk.so belum diekstrak. Tekan \"Jalankan Minecraft\" sekali dulu, lalu coba lagi.")
+            return
+        }
+        try {
+            val crc = CRC32()
+            src.inputStream().use { ins ->
+                val buf = ByteArray(65536)
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) break
+                    crc.update(buf, 0, n)
+                }
+            }
+            log("libmaesdk.so: ${src.length()} byte, crc32=${java.lang.Long.toHexString(crc.value)}")
+
+            // Bandingkan dengan byte yang tercatat di memori saat crash (code@e0e3b6ee, file off 0x1e86ee)
+            RandomAccessFile(src, "r").use { raf ->
+                val off = 0x1e86eeL
+                if (raf.length() >= off + 64) {
+                    raf.seek(off)
+                    val b = ByteArray(64)
+                    raf.readFully(b)
+                    log("byte di file @0x1e86ee: " + b.joinToString("") { "%02x".format(it) })
+                }
+            }
+
+            val name = "libmaesdk.so"
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, name)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                if (uri == null) {
+                    log("Gagal bikin file di folder Download.")
+                    return
+                }
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    src.inputStream().use { it.copyTo(out) }
+                }
+                log("Tersalin ke Download/$name")
+            } else {
+                val dst = File(getExternalFilesDir(null), name)
+                src.copyTo(dst, overwrite = true)
+                log("Tersalin ke ${dst.absolutePath}")
+            }
+        } catch (t: Throwable) {
+            log("Gagal ekspor: ${t.javaClass.simpleName}: ${t.message}")
+        }
     }
 
     private fun openPlain() {
