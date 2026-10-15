@@ -17,6 +17,7 @@ import kotlin.math.ln
  * 3. Daftarkan APK Minecraft sebagai sumber asset/resource.
  * 4. Analisis library (analyze) untuk mengetahui mana yang dilindungi PairIP.
  *
+ * Catatan fix_12: libmaesdk dan libPlayFabMultiplayer diganti stub buatan Cubix (lihat STUBBED).
  * Catatan fix_11: patch byte libmaesdk.so DIHAPUS. Library itu dilindungi PairIP (kodenya
  * terenkripsi), jadi patch di offset tetap malah menimpa data terenkripsi.
  */
@@ -26,7 +27,7 @@ object McLoader {
     private const val ABI_DIR = "lib/armeabi-v7a/"
 
     // Ganti nilai ini kalau isi mclibs harus diekstrak ulang (mis. setelah logika ekstraksi berubah).
-    private const val PATCH_VERSION = "cubix_v3_clean"
+    private const val PATCH_VERSION = "cubix_v4_stub"
 
     @Volatile
     private var prepared = false
@@ -65,6 +66,9 @@ object McLoader {
 
     fun libDir(ctx: Context): File = File(ctx.filesDir, "mclibs")
 
+    /** Library Minecraft yang dilindungi PairIP; diganti stub buatan Cubix (ada di nativeLibraryDir). */
+    private val STUBBED = setOf("libmaesdk.so", "libPlayFabMultiplayer.so")
+
     /** Ekstrak library native dari APK apa adanya, return daftar nama file yang berhasil diekstrak. */
     fun extractLibs(ctx: Context, info: ApplicationInfo): List<String> {
         val dest = libDir(ctx)
@@ -82,7 +86,9 @@ object McLoader {
                 while (entries.hasMoreElements()) {
                     val e = entries.nextElement()
                     if (e.isDirectory || !e.name.startsWith(ABI_DIR) || !e.name.endsWith(".so")) continue
-                    val out = File(dest, e.name.substringAfterLast('/'))
+                    val base = e.name.substringAfterLast('/')
+                    if (base in STUBBED) continue
+                    val out = File(dest, base)
                     zip.getInputStream(e).use { input ->
                         out.outputStream().use { output -> input.copyTo(output) }
                     }
@@ -91,6 +97,16 @@ object McLoader {
                     names.add(out.name)
                 }
             }
+        }
+        // Pasang stub pengganti library yang dilindungi PairIP
+        for (stub in STUBBED) {
+            val src = File(ctx.applicationInfo.nativeLibraryDir, stub)
+            if (!src.exists()) continue
+            val out = File(dest, stub)
+            src.inputStream().use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+            out.setReadable(true, false)
+            out.setExecutable(true, false)
+            names.add(stub)
         }
         stamp.writeText(key)
         return names

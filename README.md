@@ -2,7 +2,7 @@
 
 Kerangka launcher Minecraft Bedrock untuk Android 32-bit.
 
-## Status fix_11
+## Status fix_12
 Minecraft dari Google Play dilindungi **PairIP**. `libmaesdk.so` bawaannya `NEEDED libpairipcore.so`
 dan sebagian kodenya terenkripsi (diverifikasi dari entropi). Library itu tidak bisa dijalankan dari
 paket lain, dan patch byte di offset tetap malah menimpa data terenkripsi. Karena itu:
