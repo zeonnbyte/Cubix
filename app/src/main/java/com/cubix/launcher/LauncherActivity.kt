@@ -62,11 +62,14 @@ class LauncherActivity : Activity() {
                 val p = ProcessBuilder("logcat", "-d", "-t", "2000", "-v", "time")
                     .redirectErrorStream(true).start()
                 val lines = p.inputStream.bufferedReader().readLines()
-                val re = Regex(
-                    "AndroidRuntime|FATAL|Fatal signal|libc|mojang|minecraft|cubix|UnsatisfiedLink|dlopen|linker|NativeActivity|ClassNotFound|NoSuchMethod|Exception|Error",
-                    RegexOption.IGNORE_CASE
-                )
-                lines.filter { re.containsMatchIn(it) }.takeLast(120).joinToString("\n")
+                val noise = Regex("Insets|GraphicsEnvironment|OpenGLRenderer|Monitor::Inflate|Compiler allocated|hiddenapi")
+                val clean = lines.filterNot { noise.containsMatchIn(it) }
+                val idx = clean.indexOfLast { it.contains("Fatal signal") || it.contains("FATAL EXCEPTION") }
+                if (idx < 0) {
+                    clean.takeLast(80).joinToString("\n")
+                } else {
+                    clean.subList(maxOf(0, idx - 25), minOf(clean.size, idx + 90)).joinToString("\n")
+                }
             } catch (t: Throwable) {
                 "Gagal baca log: ${t.message}"
             }

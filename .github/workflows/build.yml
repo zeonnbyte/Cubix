@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +52,13 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle assembleDebug
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Cubix-debug
-          path: app/build/outputs/apk/debug/*.apk
+      - name: Rilis APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          cp app/build/outputs/apk/debug/*.apk Cubix.apk
+          gh release create "build-${{ github.run_number }}" Cubix.apk \
+            --title "Build ${{ github.run_number }}" \
+            --notes "${NOTES:-Build manual}" \
+            --latest
