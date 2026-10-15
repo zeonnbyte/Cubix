@@ -31,7 +31,7 @@ object McLoader {
     private const val ABI_DIR = "lib/armeabi-v7a/"
 
     // Ganti nilai ini kalau isi mclibs harus diekstrak ulang (mis. setelah logika ekstraksi berubah).
-    private const val PATCH_VERSION = "cubix_v5_res"
+    private const val PATCH_VERSION = "cubix_v6_fill"
 
     @Volatile
     private var prepared = false
@@ -243,6 +243,25 @@ object McLoader {
         return sb.toString()
     }
 
+    /**
+     * Kelas saoF (kumpulan string statis) tidak terisi karena kode startup Minecraft tidak ikut jalan
+     * di Cubix, lalu MainActivity.getScreenHeight() crash (NullPointerException). Isi yang null dengan "".
+     */
+    private fun fillNullStrings(loader: ClassLoader) {
+        try {
+            val k = Class.forName("org.spongycastle.jce.netscape.Kaf.saoF", true, loader)
+            for (f in k.declaredFields) {
+                if (f.type != String::class.java || !java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                try {
+                    f.isAccessible = true
+                    if (f.get(null) == null) f.set(null, "")
+                } catch (_: Throwable) {
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun findField(obj: Any, name: String): Field {
         var c: Class<*>? = obj.javaClass
         while (c != null) {
@@ -307,6 +326,7 @@ object McLoader {
             parent
         )
         clField.set(packageInfo, loader)
+        fillNullStrings(loader)
         prepared = true
     }
 }
