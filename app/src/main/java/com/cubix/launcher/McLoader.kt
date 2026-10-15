@@ -257,12 +257,22 @@ object McLoader {
         gameAssets = am
     }
 
-    private fun addNativePath(ctx: Context, dir: String) {
-        val cl = ctx.classLoader as dalvik.system.BaseDexClassLoader
-        val m = dalvik.system.BaseDexClassLoader::class.java
-            .getDeclaredMethod("addNativePath", java.util.Collection::class.java)
-        m.isAccessible = true
-        m.invoke(cl, listOf(dir))
+    /**
+     * Coba tambahkan folder ke path native class loader. addNativePath adalah API tersembunyi
+     * dan diblokir di banyak HP (NoSuchMethodException), jadi kegagalannya TIDAK fatal:
+     * semua library dimuat lewat System.load(path absolut) sehingga path tidak wajib.
+     */
+    private fun addNativePath(ctx: Context, dir: String): String? {
+        return try {
+            val cl = ctx.classLoader as dalvik.system.BaseDexClassLoader
+            val m = dalvik.system.BaseDexClassLoader::class.java
+                .getDeclaredMethod("addNativePath", java.util.Collection::class.java)
+            m.isAccessible = true
+            m.invoke(cl, listOf(dir))
+            null
+        } catch (t: Throwable) {
+            "addNativePath dilewati (${t.javaClass.simpleName}); pakai System.load path absolut\n"
+        }
     }
 
     /**
@@ -275,7 +285,7 @@ object McLoader {
     fun loadLibs(ctx: Context): String {
         val dir = libDir(ctx)
         val sb = StringBuilder()
-        addNativePath(ctx, dir.absolutePath)
+        addNativePath(ctx, dir.absolutePath)?.let { sb.append(it) }
 
         fun loadOne(name: String): Boolean {
             val f = File(dir, "lib$name.so")
@@ -310,7 +320,7 @@ object McLoader {
         for (name in order) loadOne(name)
 
         File(dir, "libminecraftpe.so").setReadOnly()
-        System.loadLibrary("minecraftpe")
+        System.load(File(dir, "libminecraftpe.so").absolutePath)
         sb.append("libminecraftpe dimuat\n")
 
         // gxcore dimuat setelah minecraftpe (urutan Levi); kegagalan dicatat, tidak fatal.
