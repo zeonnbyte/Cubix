@@ -34,22 +34,27 @@ android {
         }
     }
 
+    // Keystore dibaca dari environment (GitHub Secrets). Kalau kosong, pakai debug key bawaan.
+    val ksPath = System.getenv("KEYSTORE_PATH")
+
     signingConfigs {
-        create("fixed") {
-            storeFile = rootProject.file("cubix.keystore")
-            storePassword = "cubix123"
-            keyAlias = "cubix"
-            keyPassword = "cubix123"
+        if (ksPath != null) {
+            create("fixed") {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("fixed")
+            if (ksPath != null) signingConfig = signingConfigs.getByName("fixed")
         }
         release {
-            signingConfig = signingConfigs.getByName("fixed")
             isMinifyEnabled = false
+            if (ksPath != null) signingConfig = signingConfigs.getByName("fixed")
         }
     }
 
