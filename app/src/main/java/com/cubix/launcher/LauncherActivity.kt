@@ -59,6 +59,10 @@ class LauncherActivity : Activity() {
             text = "3. Ekspor libminecraftpe.so ke Download"
             setOnClickListener { exportLibs(listOf("libminecraftpe.so")) }
         }
+        val btnExportDex = Button(this).apply {
+            text = "4. Ekspor dex MainActivity Minecraft ke Download"
+            setOnClickListener { exportMcDex() }
+        }
         logView = TextView(this).apply { setTextIsSelectable(true) }
         root.addView(btnRun)
         root.addView(btnPlain)
@@ -66,6 +70,7 @@ class LauncherActivity : Activity() {
         root.addView(btnAnalyze)
         root.addView(btnExportSmall)
         root.addView(btnExportMc)
+        root.addView(btnExportDex)
         root.addView(
             ScrollView(this).apply { addView(logView) },
             LinearLayout.LayoutParams(
@@ -161,7 +166,7 @@ class LauncherActivity : Activity() {
         logView.text = "Mengekstrak dan menganalisis library, tunggu sebentar...\n"
         Thread {
             val report = StringBuilder()
-            report.append("Cubix fix_14 laporan library\n")
+            report.append("Cubix fix_15 laporan library\n")
             report.append("ABI HP: ").append(Build.SUPPORTED_ABIS.joinToString()).append('\n')
             try {
                 @Suppress("DEPRECATION")
@@ -235,6 +240,36 @@ class LauncherActivity : Activity() {
             }
         }
         logUi("Selesai.")
+    }
+
+    /** Tombol 4: salin file .dex Minecraft yang memuat MainActivity ke Download (untuk dianalisis). */
+    private fun exportMcDex() {
+        logView.text = ""
+        Thread {
+            try {
+                val info = packageManager.getApplicationInfo(McLoader.MC_PACKAGE, 0)
+                val needle = "Lcom/mojang/minecraftpe/MainActivity;"
+                var count = 0
+                for (apk in McLoader.apkPaths(info)) {
+                    java.util.zip.ZipFile(apk).use { zip ->
+                        val entries = zip.entries()
+                        while (entries.hasMoreElements()) {
+                            val e = entries.nextElement()
+                            if (!e.name.endsWith(".dex")) continue
+                            val bytes = zip.getInputStream(e).use { it.readBytes() }
+                            if (!String(bytes, Charsets.ISO_8859_1).contains(needle)) continue
+                            val name = "mc." + e.name.substringAfterLast('/')
+                            val where = saveToDownloads(name, "application/octet-stream") { out -> out.write(bytes) }
+                            logUi("$name (${bytes.size} byte) -> $where")
+                            count++
+                        }
+                    }
+                }
+                if (count == 0) logUi("Tidak ada dex yang memuat MainActivity.") else logUi("Selesai.")
+            } catch (t: Throwable) {
+                logUi("GAGAL ${t.javaClass.simpleName}: ${t.message}")
+            }
+        }.start()
     }
 
     private fun openPlain() {
