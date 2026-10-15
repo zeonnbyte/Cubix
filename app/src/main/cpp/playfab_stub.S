@@ -300,8 +300,8 @@ _ZN16AndroidJniHelper9GetJniEnvEPP7_JNIEnvPb:
 .global JNI_OnLoad
 .type JNI_OnLoad,%function
 JNI_OnLoad:
-  movw r0, #0x0006
-  movt r0, #0x0001
+  mov r0, #0x10000
+  add r0, r0, #6
   bx lr
 .section .bss
 .align 3
