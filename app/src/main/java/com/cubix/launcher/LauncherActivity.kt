@@ -73,7 +73,7 @@ class LauncherActivity : Activity() {
                 if (idx < 0) {
                     clean.takeLast(80).joinToString("\n")
                 } else {
-                    clean.subList(maxOf(0, idx - 90), minOf(clean.size, idx + 70)).joinToString("\n")
+                    clean.subList(maxOf(0, idx - 170), minOf(clean.size, idx + 70)).joinToString("\n")
                 }
             } catch (t: Throwable) {
                 "Gagal baca log: ${t.message}"
@@ -107,6 +107,13 @@ class LauncherActivity : Activity() {
             return
         }
         log("APK Minecraft: ${McLoader.apkPaths(info).size} file")
+        try {
+            @Suppress("DEPRECATION")
+            val pi = packageManager.getPackageInfo(McLoader.MC_PACKAGE, 0)
+            @Suppress("DEPRECATION")
+            log("Minecraft ${pi.versionName} (code ${pi.versionCode}), Application: ${info.className}")
+        } catch (_: Throwable) {
+        }
 
         try {
             val libs = McLoader.extractLibs(this, info)

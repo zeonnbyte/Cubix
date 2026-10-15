@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <ucontext.h>
+#include <stdlib.h>
+#include <elf.h>
 
 #define TAG "Cubix"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
@@ -18,10 +20,10 @@ struct Region {
     uintptr_t hi;
     uintptr_t off;
     char perms[5];
-    char path[200];
+    char path[160];
 };
 
-static const int MAX_REGIONS = 2048;
+static const int MAX_REGIONS = 8192;
 static Region g_regions[MAX_REGIONS];
 static int g_nregions = 0;
 
@@ -38,8 +40,8 @@ static void load_maps() {
         unsigned long lo = 0, hi = 0, off = 0, ino = 0;
         char perms[8] = {0};
         char dev[16] = {0};
-        char path[200] = {0};
-        int n = sscanf(line, "%lx-%lx %7s %lx %15s %lu %199[^\n]", &lo, &hi, perms, &off, dev, &ino, path);
+        char path[160] = {0};
+        int n = sscanf(line, "%lx-%lx %7s %lx %15s %lu %159[^\n]", &lo, &hi, perms, &off, dev, &ino, path);
         if (n < 6) continue;
         Region& r = g_regions[g_nregions++];
         r.lo = lo;
@@ -70,6 +72,59 @@ static void describe(const char* name, uintptr_t v) {
     }
 }
 
+
+// Cari simbol ekspor terdekat (dari .dynsym di file .so) untuk offset tertentu.
+static void nearest_symbol(const char* path, uint32_t off, const char* label) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > 64 * 1024 * 1024) { fclose(f); return; }
+    unsigned char* buf = (unsigned char*)malloc(size);
+    if (!buf) { fclose(f); return; }
+    size_t rd = fread(buf, 1, size, f);
+    fclose(f);
+    if ((long)rd != size) { free(buf); return; }
+    Elf32_Ehdr* eh = (Elf32_Ehdr*)buf;
+    if (memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0 || eh->e_shoff == 0 ||
+        eh->e_shoff + (uint32_t)eh->e_shnum * sizeof(Elf32_Shdr) > (uint32_t)size) {
+        LOGI("%s: ELF tanpa section header, simbol tidak bisa dibaca", label);
+        free(buf);
+        return;
+    }
+    Elf32_Shdr* sh = (Elf32_Shdr*)(buf + eh->e_shoff);
+    const char* best = nullptr;
+    uint32_t bestVal = 0, bestSize = 0;
+    uint32_t jniOnLoad = 0;
+    for (int i = 0; i < eh->e_shnum; i++) {
+        if (sh[i].sh_type != SHT_DYNSYM) continue;
+        Elf32_Shdr& str = sh[sh[i].sh_link];
+        const char* strtab = (const char*)(buf + str.sh_offset);
+        Elf32_Sym* syms = (Elf32_Sym*)(buf + sh[i].sh_offset);
+        int n = sh[i].sh_size / sizeof(Elf32_Sym);
+        for (int j = 0; j < n; j++) {
+            if (syms[j].st_shndx == 0 || ELF32_ST_TYPE(syms[j].st_info) != STT_FUNC) continue;
+            uint32_t v = syms[j].st_value & ~1u;
+            const char* nm = strtab + syms[j].st_name;
+            if (strcmp(nm, "JNI_OnLoad") == 0) jniOnLoad = v;
+            if (v <= off && v >= bestVal) {
+                best = nm;
+                bestVal = v;
+                bestSize = syms[j].st_size;
+            }
+        }
+    }
+    if (jniOnLoad) LOGI("%s: JNI_OnLoad ada di offset 0x%x", label, jniOnLoad);
+    if (best) {
+        LOGI("%s: 0x%x dekat simbol %s+0x%x (ukuran simbol 0x%x)%s", label, off, best,
+             off - bestVal, bestSize, (off - bestVal < bestSize) ? " [DI DALAM simbol]" : "");
+    } else {
+        LOGI("%s: 0x%x tidak ada simbol ekspor sebelumnya", label, off);
+    }
+    free(buf);
+}
+
 static void handler(int sig, siginfo_t* si, void* ctx) {
     load_maps();
     LOGI("==== Cubix crash handler: sig=%d fault_addr=%p ====", sig, si ? si->si_addr : nullptr);
@@ -80,6 +135,12 @@ static void handler(int sig, siginfo_t* si, void* ctx) {
     uintptr_t sp = uc->uc_mcontext.arm_sp;
     describe("pc", pc);
     describe("lr", lr);
+    {
+        Region* r1 = find_region(pc);
+        if (r1 && r1->path[0]) nearest_symbol(r1->path, (uint32_t)(pc - r1->lo + r1->off), "pc");
+        Region* r2 = find_region(lr);
+        if (r2 && r2->path[0]) nearest_symbol(r2->path, (uint32_t)(lr - r2->lo + r2->off), "lr");
+    }
     LOGI("r0=%08lx r1=%08lx r2=%08lx r3=%08lx r4=%08lx r5=%08lx",
          uc->uc_mcontext.arm_r0, uc->uc_mcontext.arm_r1, uc->uc_mcontext.arm_r2,
          uc->uc_mcontext.arm_r3, uc->uc_mcontext.arm_r4, uc->uc_mcontext.arm_r5);
@@ -103,7 +164,7 @@ static void handler(int sig, siginfo_t* si, void* ctx) {
     // Pemindaian stack: alamat yang menunjuk ke kode di dalam library
     uintptr_t* s = (uintptr_t*)sp;
     int hits = 0;
-    for (int i = 0; i < 1024 && hits < 60; i++) {
+    for (int i = 0; i < 4096 && hits < 40; i++) {
         Region* sr = find_region((uintptr_t)&s[i]);
         if (!sr || sr->perms[0] != 'r') break;
         uintptr_t v = s[i];
