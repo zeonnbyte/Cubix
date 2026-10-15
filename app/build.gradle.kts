@@ -11,8 +11,8 @@ android {
         applicationId = "com.cubix.launcher"
         minSdk = 26
         targetSdk = 33
-        versionCode = 21
-        versionName = "0.1-fix21"
+        versionCode = 22
+        versionName = "0.1-fix22"
 
         // Khusus 32-bit ARM
         ndk {
@@ -45,6 +45,12 @@ android {
                 keyAlias = System.getenv("KEY_ALIAS")
                 keyPassword = System.getenv("KEY_PASSWORD")
             }
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += listOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*", "META-INF/INDEX.LIST")
         }
     }
 
