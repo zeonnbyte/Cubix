@@ -1,6 +1,9 @@
 package com.cubix.launcher
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -30,9 +33,14 @@ class LauncherActivity : Activity() {
             text = "Buka Minecraft biasa"
             setOnClickListener { openPlain() }
         }
-        logView = TextView(this)
+        val btnLog = Button(this).apply {
+            text = "Salin log crash"
+            setOnClickListener { showCrashLog() }
+        }
+        logView = TextView(this).apply { setTextIsSelectable(true) }
         root.addView(btnRun)
         root.addView(btnPlain)
+        root.addView(btnLog)
         root.addView(ScrollView(this).apply { addView(logView) })
         setContentView(root)
     }
@@ -45,6 +53,30 @@ class LauncherActivity : Activity() {
         packageManager.getApplicationInfo(McLoader.MC_PACKAGE, 0)
     } catch (e: PackageManager.NameNotFoundException) {
         null
+    }
+
+    private fun showCrashLog() {
+        logView.text = "Membaca log..."
+        Thread {
+            val text = try {
+                val p = ProcessBuilder("logcat", "-d", "-t", "2000", "-v", "time")
+                    .redirectErrorStream(true).start()
+                val lines = p.inputStream.bufferedReader().readLines()
+                val re = Regex(
+                    "AndroidRuntime|FATAL|Fatal signal|libc|mojang|minecraft|cubix|UnsatisfiedLink|dlopen|linker|NativeActivity|ClassNotFound|NoSuchMethod|Exception|Error",
+                    RegexOption.IGNORE_CASE
+                )
+                lines.filter { re.containsMatchIn(it) }.takeLast(120).joinToString("\n")
+            } catch (t: Throwable) {
+                "Gagal baca log: ${t.message}"
+            }
+            runOnUiThread {
+                val out = if (text.isBlank()) "Log kosong" else text
+                logView.text = "(sudah disalin ke clipboard)\n" + out
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("cubix log", out))
+            }
+        }.start()
     }
 
     private fun openPlain() {

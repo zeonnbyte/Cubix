@@ -31,6 +31,11 @@ object McLoader {
     /** Ekstrak library native dari APK, return daftar nama file yang berhasil diekstrak. */
     fun extractLibs(ctx: Context, info: ApplicationInfo): List<String> {
         val dest = File(ctx.filesDir, "mclibs")
+        val stamp = File(dest, "stamp.txt")
+        val key = "${ctx.packageManager.getPackageInfo(MC_PACKAGE, 0).lastUpdateTime}:${info.sourceDir}"
+        if (stamp.exists() && stamp.readText() == key && File(dest, "libminecraftpe.so").exists()) {
+            return dest.list()?.filter { it.endsWith(".so") } ?: emptyList()
+        }
         dest.deleteRecursively()
         dest.mkdirs()
         val names = mutableListOf<String>()
@@ -49,6 +54,7 @@ object McLoader {
                 }
             }
         }
+        stamp.writeText(key)
         return names
     }
 
