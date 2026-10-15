@@ -1,18 +1,18 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
 }
 
 android {
     namespace = "com.cubix.launcher"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.cubix.launcher"
-        minSdk = 21
+        minSdk = 26
         targetSdk = 33
-        versionCode = 18
-        versionName = "0.1-fix18"
+        versionCode = 20
+        versionName = "0.1-fix20"
 
         // Khusus 32-bit ARM
         ndk {
@@ -59,10 +59,13 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+}
+
+dependencies {
+    implementation(project(":minecraft"))
+    implementation(libs.appcompat)
+    implementation(libs.material)
 }

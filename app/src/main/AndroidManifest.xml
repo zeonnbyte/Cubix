@@ -14,6 +14,7 @@
     </queries>
 
     <application
+        android:name=".CubixApp"
         android:allowBackup="false"
         android:label="Cubix"
         android:hardwareAccelerated="true"
@@ -28,13 +29,12 @@
             </intent-filter>
         </activity>
 
-        <!-- Kelasnya diambil dari dex Minecraft lewat McLoader saat runtime -->
         <activity
-            android:name="com.mojang.minecraftpe.MainActivity"
+            android:name=".GameActivity"
             android:exported="false"
             android:launchMode="singleTask"
             android:screenOrientation="sensorLandscape"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:theme="@style/CubixGameTheme"
             android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|fontScale|colorMode|locale|layoutDirection">
             <meta-data
                 android:name="android.app.lib_name"

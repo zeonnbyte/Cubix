@@ -279,44 +279,7 @@ class LauncherActivity : Activity() {
 
     /** Tombol 5: baca isi kelas saoF dan info Application Minecraft lewat class loader Minecraft. */
     private fun diagnose() {
-        logView.text = ""
-        Thread {
-            try {
-                val info = packageManager.getApplicationInfo(McLoader.MC_PACKAGE, 0)
-                logUi("Application Minecraft: ${info.className}")
-                McLoader.extractLibs(this, info)
-                McLoader.prepare(this, info)
-                val cl = applicationContext.classLoader
-                val appName = info.className
-                if (appName != null) {
-                    try {
-                        var c: Class<*>? = Class.forName(appName, false, cl)
-                        val chain = mutableListOf<String>()
-                        while (c != null) { chain.add(c.name); c = c.superclass }
-                        logUi("Rantai kelas Application: ${chain.joinToString(" > ")}")
-                        val ac = Class.forName(appName, false, cl)
-                        logUi("Method Application: ${ac.declaredMethods.joinToString { it.name }}")
-                    } catch (t: Throwable) {
-                        logUi("Application: GAGAL ${t.javaClass.simpleName}: ${t.message}")
-                    }
-                }
-                try {
-                    val k = Class.forName("org.spongycastle.jce.netscape.Kaf.saoF", true, cl)
-                    logUi("saoF method: ${k.declaredMethods.joinToString { it.name }.ifEmpty { "(tidak ada)" }}")
-                    for (f in k.declaredFields) {
-                        f.isAccessible = true
-                        val v = try { f.get(null) } catch (t: Throwable) { "ERR ${t.message}" }
-                        logUi("saoF.${f.name} = ${v?.let { "\"" + it + "\"" } ?: "NULL"}")
-                    }
-                } catch (t: Throwable) {
-                    logUi("saoF: GAGAL ${t.javaClass.simpleName}: ${t.message}")
-                    t.cause?.let { logUi("  penyebab: ${it.javaClass.simpleName}: ${it.message}") }
-                }
-                logUi("Selesai.")
-            } catch (t: Throwable) {
-                logUi("GAGAL ${t.javaClass.simpleName}: ${t.message}")
-            }
-        }.start()
+        logUi("Diagnosa PairIP dihapus. Pakai tombol 1 (analisis) dan Salin log crash.")
     }
 
     private fun openPlain() {
@@ -360,9 +323,10 @@ class LauncherActivity : Activity() {
             }
 
             McLoader.prepare(this, info)
+            log("loadLibs: " + McLoader.loadLibs(this))
             log("Class loader siap, menjalankan Minecraft...")
 
-            val intent = Intent().setClassName(packageName, McLoader.MC_MAIN)
+            val intent = Intent(this, GameActivity::class.java)
             startActivity(intent)
         } catch (t: Throwable) {
             log("Gagal: ${t.javaClass.simpleName}: ${t.message}")

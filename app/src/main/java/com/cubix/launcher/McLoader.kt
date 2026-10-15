@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
+import android.content.res.AssetManager
 import android.os.Bundle
 import dalvik.system.DexClassLoader
 import java.io.File
@@ -31,7 +32,7 @@ object McLoader {
     private const val ABI_DIR = "lib/armeabi-v7a/"
 
     // Ganti nilai ini kalau isi mclibs harus diekstrak ulang (mis. setelah logika ekstraksi berubah).
-    private const val PATCH_VERSION = "cubix_v6_fill"
+    private const val PATCH_VERSION = "cubix_v7_levi_order"
 
     @Volatile
     private var prepared = false
@@ -243,135 +244,83 @@ object McLoader {
         return sb.toString()
     }
 
-    /** Nilai asli untuk field string yang diketahui dibaca MainActivity (selain "" biasa). */
-    private val KNOWN_STRINGS = mapOf(
-        // MainActivity.onCreate baris ~428: checkPermission(<field ini>, pid, uid) -> mHasStoragePermission
-        "org.spongycastle.math.raw.gGd.RNTdaLaXDINeE" to mapOf(
-            "OzjLtWrMWVvcOMs" to "android.permission.WRITE_EXTERNAL_STORAGE"
-        )
-    )
+    /** AssetManager yang membaca APK Minecraft (asset game), dipakai GameActivity dan CubixApp. */
+    @Volatile
+    var gameAssets: AssetManager? = null
+        private set
 
-    private fun fillClass(k: Class<*>, known: Map<String, String>?) {
-        for (f in k.declaredFields) {
-            if (f.type != String::class.java || !java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
-            try {
-                f.isAccessible = true
-                if (f.get(null) == null) f.set(null, known?.get(f.name) ?: "")
-            } catch (_: Throwable) {
-            }
-        }
+    /** Siapkan asset Minecraft. MainActivity sekarang kelas buatan sendiri (modul :minecraft), tanpa PairIP. */
+    fun prepare(ctx: Context, info: ApplicationInfo) {
+        val am = AssetManager::class.java.getDeclaredConstructor().newInstance()
+        val add = AssetManager::class.java.getMethod("addAssetPath", String::class.java)
+        for (p in apkPaths(info)) add.invoke(am, p)
+        gameAssets = am
+    }
+
+    private fun addNativePath(ctx: Context, dir: String) {
+        val cl = ctx.classLoader as dalvik.system.BaseDexClassLoader
+        val m = dalvik.system.BaseDexClassLoader::class.java
+            .getDeclaredMethod("addNativePath", java.util.Collection::class.java)
+        m.isAccessible = true
+        m.invoke(cl, listOf(dir))
     }
 
     /**
-     * Kode startup PairIP Minecraft tidak jalan di Cubix, jadi kelas-kelas penampung string
-     * (yang namanya diacak, mis. saoF dan RNTdaLaXDINeE) tidak terisi dan field-nya null.
-     * fix_18: isi semua field String statis yang null di kelas-kelas itu, bukan hanya saoF.
+     * Muat library hasil ekstrak dengan URUTAN TETAP seperti Levi (GamePackageManager /
+     * MinecraftRuntimePreparer), bukan semua .so sekaligus. Library lain (mis. libpairipcore,
+     * libgxcore) sengaja tidak dimuat di awal: memuat libpairipcore bisa memicu pemeriksaan
+     * PairIP dan mematikan proses, dan gxcore di Levi baru dimuat SETELAH minecraftpe.
+     * Melempar exception kalau libminecraftpe gagal dimuat. Return: laporan teks.
      */
-    private fun fillNullStrings(loader: ClassLoader, dexPaths: List<String>) {
-        // 1. saoF (fix_16)
-        try {
-            fillClass(Class.forName("org.spongycastle.jce.netscape.Kaf.saoF", true, loader), null)
-        } catch (_: Throwable) {
-        }
-        // 2. kelas yang sudah diketahui, dengan nilai yang benar
-        for ((cn, vals) in KNOWN_STRINGS) {
-            try {
-                fillClass(Class.forName(cn, true, loader), vals)
-            } catch (_: Throwable) {
+    fun loadLibs(ctx: Context): String {
+        val dir = libDir(ctx)
+        val sb = StringBuilder()
+        addNativePath(ctx, dir.absolutePath)
+
+        fun loadOne(name: String): Boolean {
+            val f = File(dir, "lib$name.so")
+            if (!f.exists() || f.length() == 0L) {
+                sb.append("lewati ").append(f.name).append(" (tidak ada)\n")
+                return false
+            }
+            return try {
+                f.setReadOnly()
+                System.load(f.absolutePath)
+                sb.append("dimuat ").append(f.name).append('\n')
+                true
+            } catch (t: UnsatisfiedLinkError) {
+                sb.append("gagal muat ").append(f.name).append(": ").append(t.message).append('\n')
+                false
             }
         }
-        // 3. jaring pengaman: kelas org.spongycastle.* yang SEMUA field-nya String statis
-        //    (ciri penampung string PairIP; kelas spongycastle asli tidak seperti itu)
-        for (path in dexPaths) {
-            try {
-                @Suppress("DEPRECATION")
-                val df = dalvik.system.DexFile(path)
-                val names = df.entries()
-                while (names.hasMoreElements()) {
-                    val n = names.nextElement()
-                    if (!n.startsWith("org.spongycastle.")) continue
-                    try {
-                        val k = Class.forName(n, false, loader)
-                        val fs = k.declaredFields
-                        if (fs.isEmpty()) continue
-                        if (fs.all { it.type == String::class.java && java.lang.reflect.Modifier.isStatic(it.modifiers) }) {
-                            fillClass(k, KNOWN_STRINGS[n])
-                        }
-                    } catch (_: Throwable) {
-                    }
-                }
-                @Suppress("DEPRECATION")
-                df.close()
-            } catch (_: Throwable) {
-            }
-        }
+
+        // Urutan sama dengan Levi: c++_shared, HttpClient, stub SDK, fmod, decoder, MallocRedirect.
+        for (name in listOf(
+            "c++_shared", "HttpClient.Android", "PlayFabMultiplayer", "maesdk",
+            "fmod", "MediaDecoders_Android", "MallocRedirect"
+        )) loadOne(name)
+
+        File(dir, "libminecraftpe.so").setReadOnly()
+        System.loadLibrary("minecraftpe")
+        sb.append("libminecraftpe dimuat\n")
+
+        // gxcore dimuat setelah minecraftpe (urutan Levi); kegagalan dicatat, tidak fatal.
+        loadOne("gxcore")
+        return sb.toString()
     }
 
-    private fun findField(obj: Any, name: String): Field {
-        var c: Class<*>? = obj.javaClass
-        while (c != null) {
-            try {
-                return c.getDeclaredField(name).apply { isAccessible = true }
-            } catch (_: NoSuchFieldException) {
-            }
-            c = c.superclass
+    /** Isi extra Firebase dari resource string Minecraft (seperti yang dilakukan Levi). */
+    fun firebaseExtras(ctx: Context): Map<String, String> {
+        val res = try { ctx.packageManager.getResourcesForApplication(MC_PACKAGE) } catch (_: Throwable) { return emptyMap() }
+        fun str(name: String, def: String): String {
+            val id = res.getIdentifier(name, "string", MC_PACKAGE)
+            return if (id != 0) res.getString(id) else def
         }
-        throw NoSuchFieldException(name)
-    }
-
-    /** Harus dipanggil sebelum MainActivity Minecraft dijalankan. */
-    fun prepare(ctx: Context, info: ApplicationInfo) {
-        if (prepared) return
-        val app = ctx.applicationContext
-        val allApkPaths = apkPaths(info)
-        val dexPaths = dexApkPaths(info)
-        val libDir = libDir(ctx)
-
-        // Resource Minecraft dijadikan resource UTAMA aplikasi (Cubix sendiri tidak punya resource),
-        // supaya ID resource 0x7f... di kode Minecraft cocok. Activity yang dibuat setelah ini
-        // memakai APK Minecraft sebagai sumber resource dan asset.
-        val base = (app as ContextWrapper).baseContext
-        val packageInfo = findField(base, "mPackageInfo").get(base)
-            ?: throw IllegalStateException("mPackageInfo null")
-        findField(packageInfo, "mResDir").set(packageInfo, info.sourceDir)
-        try {
-            findField(packageInfo, "mSplitResDirs").set(packageInfo, info.splitSourceDirs)
-        } catch (_: Throwable) {
-        }
-
-        // Tema MainActivity harus tema AppCompat milik Minecraft (ID-nya dari tabel resource Minecraft).
-        val mcTheme = try {
-            ctx.packageManager.getActivityInfo(ComponentName(MC_PACKAGE, MC_MAIN), 0).themeResource
-        } catch (_: Throwable) {
-            0
-        }
-        if (mcTheme != 0) {
-            (app as Application).registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-                override fun onActivityPreCreated(activity: Activity, savedInstanceState: Bundle?) {
-                    if (activity.javaClass.name == MC_MAIN) activity.setTheme(mcTheme)
-                }
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
-                override fun onActivityStarted(activity: Activity) {}
-                override fun onActivityResumed(activity: Activity) {}
-                override fun onActivityPaused(activity: Activity) {}
-                override fun onActivityStopped(activity: Activity) {}
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-                override fun onActivityDestroyed(activity: Activity) {}
-            })
-        }
-
-        // Ganti class loader aplikasi hanya dengan APK yang berisi .dex
-        val clField = findField(packageInfo, "mClassLoader")
-        val parent = clField.get(packageInfo) as ClassLoader
-        val optDir = File(ctx.codeCacheDir, "mcdex").apply { mkdirs() }
-        val loader = DexClassLoader(
-            dexPaths.joinToString(File.pathSeparator),
-            optDir.absolutePath,
-            libDir.absolutePath,
-            parent
+        return mapOf(
+            "MINECRAFT_FIREBASE_APP_ID" to str("google_app_id", "1:486187589451:android:b2331110821fe2304bd2ce"),
+            "MINECRAFT_FIREBASE_API_KEY" to str("google_api_key", str("google_crash_reporting_api_key", "")),
+            "MINECRAFT_FIREBASE_PROJECT_ID" to str("project_id", "minecraft-bedrock-57580"),
+            "MINECRAFT_FIREBASE_SENDER_ID" to str("gcm_defaultSenderId", "486187589451")
         )
-        clField.set(packageInfo, loader)
-        fillNullStrings(loader, dexPaths)
-        prepared = true
     }
 }
