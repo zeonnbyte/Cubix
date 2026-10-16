@@ -18,13 +18,11 @@ import kotlin.math.ln
 /**
  * Menyiapkan proses Cubix supaya bisa menjalankan Minecraft di dalam prosesnya sendiri:
  * 1. Ekstrak semua .so armeabi-v7a dari APK Minecraft (termasuk split APK) TANPA diubah.
- * 2. Ganti class loader aplikasi dengan DexClassLoader yang membaca dex Minecraft (tanpa split APK non-dex).
+ * 2. Muat library native lewat DexClassLoader dengan direktori ekstraksi sebagai native search path.
  * 3. Daftarkan APK Minecraft sebagai sumber asset/resource.
- * 4. Analisis library (analyze) untuk mengetahui mana yang dilindungi PairIP.
+ * 4. Analisis library (analyze) untuk mengetahui dependensi native.
  *
- * Catatan fix_12: libmaesdk dan libPlayFabMultiplayer diganti stub buatan Cubix (lihat STUBBED).
- * Catatan fix_11: patch byte libmaesdk.so DIHAPUS. Library itu dilindungi PairIP (kodenya
- * terenkripsi), jadi patch di offset tetap malah menimpa data terenkripsi.
+ * Semua library Minecraft diekstrak apa adanya; tidak ada stub atau patch byte PairIP.
  */
 object McLoader {
     const val MC_PACKAGE = "com.mojang.minecraftpe"
@@ -32,7 +30,7 @@ object McLoader {
     private const val ABI_DIR = "lib/armeabi-v7a/"
 
     // Ganti nilai ini kalau isi mclibs harus diekstrak ulang (mis. setelah logika ekstraksi berubah).
-    private const val PATCH_VERSION = "cubix_v7_levi_order"
+    private const val PATCH_VERSION = "cubix_v9_atlas_loader"
 
     @Volatile
     private var prepared = false
@@ -71,9 +69,6 @@ object McLoader {
 
     fun libDir(ctx: Context): File = File(ctx.filesDir, "mclibs")
 
-    /** Library Minecraft yang dilindungi PairIP; diganti stub buatan Cubix (ada di nativeLibraryDir). */
-    private val STUBBED = setOf("libmaesdk.so", "libPlayFabMultiplayer.so")
-
     /** Ekstrak library native dari APK apa adanya, return daftar nama file yang berhasil diekstrak. */
     fun extractLibs(ctx: Context, info: ApplicationInfo): List<String> {
         val dest = libDir(ctx)
@@ -92,7 +87,6 @@ object McLoader {
                     val e = entries.nextElement()
                     if (e.isDirectory || !e.name.startsWith(ABI_DIR) || !e.name.endsWith(".so")) continue
                     val base = e.name.substringAfterLast('/')
-                    if (base in STUBBED) continue
                     val out = File(dest, base)
                     zip.getInputStream(e).use { input ->
                         out.outputStream().use { output -> input.copyTo(output) }
@@ -102,16 +96,6 @@ object McLoader {
                     names.add(out.name)
                 }
             }
-        }
-        // Pasang stub pengganti library yang dilindungi PairIP
-        for (stub in STUBBED) {
-            val src = File(ctx.applicationInfo.nativeLibraryDir, stub)
-            if (!src.exists()) continue
-            val out = File(dest, stub)
-            src.inputStream().use { i -> out.outputStream().use { o -> i.copyTo(o) } }
-            out.setReadable(true, false)
-            out.setExecutable(true, false)
-            names.add(stub)
         }
         stamp.writeText(key)
         return names
@@ -257,35 +241,45 @@ object McLoader {
         gameAssets = am
     }
 
-    /**
-     * Coba tambahkan folder ke path native class loader. addNativePath adalah API tersembunyi
-     * dan diblokir di banyak HP (NoSuchMethodException), jadi kegagalannya TIDAK fatal:
-     * semua library dimuat lewat System.load(path absolut) sehingga path tidak wajib.
-     */
-    private fun addNativePath(ctx: Context, dir: String): String? {
-        return try {
-            val cl = ctx.classLoader as dalvik.system.BaseDexClassLoader
-            val m = dalvik.system.BaseDexClassLoader::class.java
-                .getDeclaredMethod("addNativePath", java.util.Collection::class.java)
-            m.isAccessible = true
-            m.invoke(cl, listOf(dir))
-            null
-        } catch (t: Throwable) {
-            "addNativePath dilewati (${t.javaClass.simpleName}); pakai System.load path absolut\n"
+    private class NativeLibraryClassLoader(
+        dexPath: String,
+        optimizedDirectory: String,
+        librarySearchPath: String,
+        parent: ClassLoader
+    ) : DexClassLoader(dexPath, optimizedDirectory, librarySearchPath, parent) {
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            if (name != "com.cubix.launcher.NativeLibraryLoader") {
+                return super.loadClass(name, resolve)
+            }
+            synchronized(this) {
+                val loaded = findLoadedClass(name) ?: findClass(name)
+                if (resolve) resolveClass(loaded)
+                return loaded
+            }
         }
     }
 
+    private fun nativeLoadMethod(ctx: Context, dir: File): java.lang.reflect.Method {
+        val loader = NativeLibraryClassLoader(
+            ctx.applicationInfo.sourceDir,
+            ctx.codeCacheDir.absolutePath,
+            dir.absolutePath,
+            ctx.classLoader
+        )
+        return loader.loadClass("com.cubix.launcher.NativeLibraryLoader")
+            .getMethod("load", String::class.java)
+    }
+
     /**
-     * Muat library hasil ekstrak dengan URUTAN TETAP seperti Levi (GamePackageManager /
-     * MinecraftRuntimePreparer), bukan semua .so sekaligus. Library lain (mis. libpairipcore,
-     * libgxcore) sengaja tidak dimuat di awal: memuat libpairipcore bisa memicu pemeriksaan
-     * PairIP dan mematikan proses, dan gxcore di Levi baru dimuat SETELAH minecraftpe.
-     * Melempar exception kalau libminecraftpe gagal dimuat. Return: laporan teks.
+     * Urutan library inti mengikuti urutan yang terlihat di Atlas 26.33. Urutan khusus SDK
+     * tetap mengikuti gerbang versi Levi; PairIP asli dimuat sebelum libminecraftpe bila tersedia.
      */
     fun loadLibs(ctx: Context): String {
         val dir = libDir(ctx)
         val sb = StringBuilder()
-        addNativePath(ctx, dir.absolutePath)?.let { sb.append(it) }
+        val loadMethod = nativeLoadMethod(ctx, dir)
+        sb.append("native search path: DexClassLoader -> ").append(dir.absolutePath).append('\n')
+        sb.append("urutan inti Atlas: MediaDecoders_Android -> fmod -> HttpClient.Android -> minecraftpe\n")
 
         fun loadOne(name: String): Boolean {
             val f = File(dir, "lib$name.so")
@@ -295,35 +289,70 @@ object McLoader {
             }
             return try {
                 f.setReadOnly()
-                System.load(f.absolutePath)
+                loadMethod.invoke(null, name)
                 sb.append("dimuat ").append(f.name).append('\n')
                 true
-            } catch (t: UnsatisfiedLinkError) {
-                sb.append("gagal muat ").append(f.name).append(": ").append(t.message).append('\n')
+            } catch (t: java.lang.reflect.InvocationTargetException) {
+                val cause = t.targetException ?: t
+                sb.append("gagal muat ").append(f.name).append(": ")
+                    .append(cause.javaClass.simpleName).append(": ").append(cause.message).append('\n')
                 false
             }
         }
 
-        // Urutan mengikuti Levi dan bergantung versi Minecraft (1.21 biasa = tata letak lama):
-        //   >= 1.21.130   : HttpClient.Android ikut dimuat setelah c++_shared
-        //   >= 1.26.70.20 : PlayFabMultiplayer, maesdk (stub), MallocRedirect ikut dimuat
+        fun loadRequired(name: String) {
+            if (!loadOne(name)) {
+                throw UnsatisfiedLinkError("Gagal memuat lib$name.so:\n$sb")
+            }
+        }
+
         val mcVer = try {
             ctx.packageManager.getPackageInfo(MC_PACKAGE, 0).versionName ?: ""
         } catch (_: Throwable) { "" }
         sb.append("versi Minecraft: ").append(mcVer.ifEmpty { "?" }).append('\n')
-        val order = mutableListOf("c++_shared")
-        if (atLeast(mcVer, "1.21.130")) order.add("HttpClient.Android")
-        if (atLeast(mcVer, "1.26.70.20")) { order.add("PlayFabMultiplayer"); order.add("maesdk") }
-        order.add("fmod")
-        order.add("MediaDecoders_Android")
-        if (atLeast(mcVer, "1.26.70.20")) order.add("MallocRedirect")
-        for (name in order) loadOne(name)
+        val isBeta = mcVer.contains("beta", ignoreCase = true)
+        val useHttpClient = atLeast(mcVer, if (isBeta) "1.21.130.20" else "1.21.130")
+        val useMaesdkBundle = atLeast(mcVer, if (isBeta) "1.21.110.22" else "1.21.110")
+        val usePlayFab = atLeast(mcVer, if (isBeta) "1.21.130.20" else "1.21.130")
+        val initializeBundledSdk = atLeast(mcVer, "1.26.70.20")
+        val loadedBeforeBundle = mutableSetOf<String>()
 
-        File(dir, "libminecraftpe.so").setReadOnly()
-        System.load(File(dir, "libminecraftpe.so").absolutePath)
-        sb.append("libminecraftpe dimuat\n")
+        loadRequired("c++_shared")
+        loadRequired("MediaDecoders_Android")
+        loadRequired("fmod")
+        if (useHttpClient) loadRequired("HttpClient.Android")
 
-        // gxcore dimuat setelah minecraftpe (urutan Levi); kegagalan dicatat, tidak fatal.
+        val pairIpCore = File(dir, "libpairipcore.so")
+        val hasPairIpCore = pairIpCore.isFile && pairIpCore.length() > 0L
+        if (hasPairIpCore) {
+            loadRequired("pairipcore")
+        }
+
+        if (initializeBundledSdk) {
+            loadRequired("PlayFabMultiplayer")
+            loadRequired("maesdk")
+            loadedBeforeBundle.add("PlayFabMultiplayer")
+            loadedBeforeBundle.add("maesdk")
+        }
+        if (hasPairIpCore && useMaesdkBundle && !initializeBundledSdk) {
+            if (usePlayFab) {
+                loadRequired("PlayFabMultiplayer")
+                loadedBeforeBundle.add("PlayFabMultiplayer")
+            }
+            loadRequired("maesdk")
+            loadedBeforeBundle.add("maesdk")
+        }
+        if (initializeBundledSdk) loadRequired("MallocRedirect")
+        loadRequired("minecraftpe")
+
+        if (useMaesdkBundle) {
+            if (usePlayFab && "PlayFabMultiplayer" !in loadedBeforeBundle) {
+                loadRequired("PlayFabMultiplayer")
+            }
+            if ("maesdk" !in loadedBeforeBundle) loadRequired("maesdk")
+        }
+
+        // Levi memuat gxcore setelah library game; pertahankan posisinya.
         loadOne("gxcore")
         return sb.toString()
     }

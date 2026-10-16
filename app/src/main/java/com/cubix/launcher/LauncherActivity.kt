@@ -320,7 +320,7 @@ class LauncherActivity : Activity() {
             }
             log("Library diekstrak: ${libs.joinToString()}")
             if (libs.contains("libpairipcore.so")) {
-                log("PERHATIAN: Minecraft ini memakai PairIP (libpairipcore.so). Library bawaan seperti libmaesdk.so kemungkinan terenkripsi dan akan crash. Pakai tombol 1-3 untuk analisis.")
+                log("PairIP terdeteksi: Cubix memakai library asli Minecraft tanpa modifikasi. PairIP dan pemeriksaan integritas resmi tetap aktif.")
             }
 
             McLoader.prepare(this, info)

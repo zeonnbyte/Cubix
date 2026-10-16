@@ -213,6 +213,6 @@ static void install_handler() {
 // libminecraftpe.so ter-load.
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM*, void*) {
     install_handler();
-    LOGI("libcubix loaded (armeabi-v7a), crash handler terpasang (%s, stub maesdk+playfab)", CUBIX_VERSION);
+    LOGI("libcubix loaded (armeabi-v7a), crash handler terpasang (%s)", CUBIX_VERSION);
     return JNI_VERSION_1_6;
 }
