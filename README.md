@@ -1,4 +1,4 @@
-# Cubix V0.1.29 (armeabi-v7a)
+# Cubix V0.1.30 (armeabi-v7a)
 
 Cubix uses `GameActivity` with the compatibility classes in `:minecraft`.
 Native libraries and assets are read from the installed Minecraft APK. Native
@@ -38,3 +38,11 @@ V0.1.29: the native class loader now also includes the installed Minecraft's own
 DEX files, so `libpairipcore.so` can find its `com.pairip.*` classes during
 `JNI_OnLoad` (fixes the `RegisterNatives received NULL jclass` abort). Classes
 and libraries are used unchanged.
+
+V0.1.30 (diagnostics only, no change to how libraries are loaded): the native crash
+handler now reports more about a jump to an invalid address. It decodes the call
+instruction before `lr`, checks whether a register points to a memory slot that holds the
+same value as `pc` (a PLT/GOT slot that was never filled), reads the dynamic section of the
+calling library (NEEDED, JMPREL/REL/RELR, init_array) and names the relocation symbol for
+that slot, and lists every library under `mclibs` with its address range. The native
+library layout is only read; nothing is patched or bypassed.
