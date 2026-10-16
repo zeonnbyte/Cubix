@@ -1,4 +1,4 @@
-# Cubix V0.1.28 (armeabi-v7a)
+# Cubix V0.1.29 (armeabi-v7a)
 
 Cubix uses `GameActivity` with the compatibility classes in `:minecraft`.
 Native libraries and assets are read from the installed Minecraft APK. Native
@@ -33,3 +33,8 @@ Minecraft native-library loading implementation to port to Cubix.
 
 The compatibility `MainActivity` JNI declarations must match the installed
 `libminecraftpe.so` version.
+
+V0.1.29: the native class loader now also includes the installed Minecraft's own
+DEX files, so `libpairipcore.so` can find its `com.pairip.*` classes during
+`JNI_OnLoad` (fixes the `RegisterNatives received NULL jclass` abort). Classes
+and libraries are used unchanged.

@@ -260,8 +260,18 @@ object McLoader {
     }
 
     private fun nativeLoadMethod(ctx: Context, dir: File): java.lang.reflect.Method {
+        // libpairipcore.so memanggil FindClass/RegisterNatives untuk kelas com.pairip.* di JNI_OnLoad.
+        // FindClass memakai class loader milik pemanggil System.loadLibrary (NativeLibraryLoader),
+        // jadi dex asli APK Minecraft harus ada di jalur class loader ini. Tanpa itu jclass = NULL
+        // dan ART abort ("RegisterNatives received NULL jclass"). Kelas Minecraft dipakai apa adanya.
+        val mcDex = try {
+            val mcInfo = ctx.packageManager.getApplicationInfo(MC_PACKAGE, 0)
+            dexApkPaths(mcInfo)
+        } catch (_: Throwable) { emptyList() }
+        val dexPath = (listOf(ctx.applicationInfo.sourceDir) + mcDex).distinct()
+            .joinToString(File.pathSeparator)
         val loader = NativeLibraryClassLoader(
-            ctx.applicationInfo.sourceDir,
+            dexPath,
             ctx.codeCacheDir.absolutePath,
             dir.absolutePath,
             ctx.classLoader
